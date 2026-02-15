@@ -6,42 +6,42 @@ export enum UserRole {
 }
 
 export enum ProductionStage {
-  SAWING = 'SAWING', // Распил
-  EDGE_BANDING = 'EDGE_BANDING', // Кромка
-  DRILLING = 'DRILLING', // Присадка
-  KIT_ASSEMBLY = 'KIT_ASSEMBLY', // Комплектация
-  PACKAGING = 'PACKAGING', // Упаковка
-  SHIPMENT = 'SHIPMENT' // Отгрузка
+  SAWING = 'SAWING', 
+  EDGE_BANDING = 'EDGE_BANDING', 
+  DRILLING = 'DRILLING', 
+  KIT_ASSEMBLY = 'KIT_ASSEMBLY', 
+  PACKAGING = 'PACKAGING', 
+  SHIPMENT = 'SHIPMENT' 
 }
 
 export enum TaskStatus {
   PENDING = 'PENDING',
   IN_PROGRESS = 'IN_PROGRESS',
-  PAUSED = 'PAUSED', // Промежуточный итог
+  PAUSED = 'PAUSED', 
   COMPLETED = 'COMPLETED'
 }
 
 export interface Detail {
   id: string;
-  code: string; // QR код
+  code: string; 
   name?: string;
-  quantity?: number; // Количество деталей под одним номером
-  scannedBy?: string; // ID сотрудника, отсканировавшего деталь
+  quantity?: number; 
+  scannedBy?: string; 
   scannedAt: string;
   status: 'PENDING' | 'SCANNED' | 'VERIFIED' | 'MISSING';
-  returnAfterEdge?: boolean; // Флаг: деталь должна быть разделена после кромки
-  wasSplit?: boolean; // Флаг: деталь уже была разделена
-  parentDetailId?: string; // Ссылка на родительскую деталь
+  returnAfterEdge?: boolean; 
+  wasSplit?: boolean; 
+  parentDetailId?: string; 
   planQuantity?: number;
 }
 
 export interface Package {
   id: string;
   name: string;
-  sequenceNumber?: number; // Порядковый номер
+  sequenceNumber?: number; 
   qr: string;
   createdAt: string;
-  detailIds: string[]; // детали из участка Присадка (для Упаковки) или произвольные
+  detailIds: string[]; 
   type: 'FURNITURE' | 'FITTINGS' | 'OTHER';
 }
 
@@ -68,24 +68,30 @@ export interface User {
   isLocked?: boolean; 
 }
 
+export interface CloudConfig {
+  enabled: boolean;
+  apiUrl: string;
+  apiToken: string;
+  lastSync?: string;
+}
+
 export interface BitrixConfig {
   enabled: boolean;
   webhookUrl: string;
-  chatUrl?: string; // Ссылка на чат Битрикс
+  chatUrl?: string; 
   selectedFunnelIds: string[];
   triggerStageIds: string[]; 
   fieldMapping: BitrixFieldMapping;
   portalName?: string;
   portalLogo?: string;
+  cloud?: CloudConfig;
 }
 
-// Fix: Added BitrixFunnel interface which was missing and causing errors in Settings.tsx
 export interface BitrixFunnel {
   id: string;
   name: string;
 }
 
-// Fix: Added BitrixStage interface which was missing and causing errors in Settings.tsx
 export interface BitrixStage {
   id: string;
   name: string;
@@ -121,7 +127,7 @@ export interface Task {
   stage: ProductionStage;
   status: TaskStatus;
   assignedTo?: string;
-  accompliceIds?: string[]; // Массив соисполнителей
+  accompliceIds?: string[]; 
   plannedDate?: string; 
   startedAt?: string;
   completedAt?: string;

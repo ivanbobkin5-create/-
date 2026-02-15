@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { 
   User, 
   UserRole, 
@@ -10,7 +10,8 @@ import {
   Task,
   Detail,
   Package,
-  WorkSession
+  WorkSession,
+  CloudConfig
 } from './types';
 import Sidebar from './components/Sidebar';
 import Dashboard from './pages/Dashboard';
@@ -24,17 +25,16 @@ import Archive from './pages/Archive';
 import LoginPage from './pages/LoginPage';
 import SiteAdmin from './pages/SiteAdmin';
 import Settings from './pages/Settings';
-import { STAGE_SEQUENCE, STAGE_CONFIG } from './constants';
-import { LogIn, LogOut, Trash2 } from 'lucide-react';
+import { dbService } from './dbService';
+import { Database, CloudOff, CloudCheck, Loader2 } from 'lucide-react';
 
 const STORAGE_KEYS = {
-  ORDERS: 'woodplan_orders',
-  STAFF: 'woodplan_staff',
   BITRIX_CONFIG: 'woodplan_bitrix_config',
   USER: 'woodplan_user',
-  MESSAGES: 'woodplan_messages',
-  SHIFTS: 'woodplan_shifts',
-  WORK_SESSIONS: 'woodplan_sessions'
+  CACHE_ORDERS: 'woodplan_cache_orders',
+  CACHE_STAFF: 'woodplan_cache_staff',
+  CACHE_SHIFTS: 'woodplan_cache_shifts',
+  CACHE_SESSIONS: 'woodplan_cache_sessions',
 };
 
 const INITIAL_BITRIX_CONFIG: BitrixConfig = {
@@ -48,502 +48,265 @@ const INITIAL_BITRIX_CONFIG: BitrixConfig = {
     clientName: 'TITLE',
     deadline: 'CLOSEDATE',
     description: 'COMMENTS'
+  },
+  cloud: { 
+    enabled: false, 
+    apiUrl: '', 
+    apiToken: 'MebelPlan_2025_Secure' // Токен по умолчанию совпадает с api.php
   }
 };
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.USER);
-      return saved ? JSON.parse(saved) : null;
-    } catch (e) { return null; }
-  });
-  
-  const [orders, setOrders] = useState<Order[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.ORDERS);
-      return saved ? JSON.parse(saved) : [];
-    } catch (e) { return []; }
-  });
-
-  const [staff, setStaff] = useState<User[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.STAFF);
-      return saved ? JSON.parse(saved) : [];
-    } catch (e) { return []; }
-  });
-
-  const [shifts, setShifts] = useState<Record<string, Record<string, boolean>>>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.SHIFTS);
-      return saved ? JSON.parse(saved) : {};
-    } catch (e) { return {}; }
-  });
-
-  const [sessions, setSessions] = useState<WorkSession[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.WORK_SESSIONS);
-      return saved ? JSON.parse(saved) : [];
-    } catch (e) { return []; }
+    const saved = localStorage.getItem(STORAGE_KEYS.USER);
+    return saved ? JSON.parse(saved) : null;
   });
 
   const [bitrixConfig, setBitrixConfig] = useState<BitrixConfig>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.BITRIX_CONFIG);
-      return saved ? JSON.parse(saved) : INITIAL_BITRIX_CONFIG;
-    } catch (e) { return INITIAL_BITRIX_CONFIG; }
+    const saved = localStorage.getItem(STORAGE_KEYS.BITRIX_CONFIG);
+    return saved ? JSON.parse(saved) : INITIAL_BITRIX_CONFIG;
   });
 
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [staff, setStaff] = useState<User[]>([]);
+  const [shifts, setShifts] = useState<Record<string, Record<string, boolean>>>({});
+  const [sessions, setSessions] = useState<WorkSession[]>([]);
+  
   const [currentPage, setCurrentPage] = useState('dashboard');
-  const [isSiteAdmin, setIsSiteAdmin] = useState(() => user?.role === UserRole.SITE_ADMIN);
-  const [flashShiftBtn, setFlashShiftBtn] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [dbStatus, setDbStatus] = useState<'loading' | 'online' | 'offline' | 'local'>('loading');
 
-  useEffect(() => { localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(orders)); }, [orders]);
-  useEffect(() => { localStorage.setItem(STORAGE_KEYS.STAFF, JSON.stringify(staff)); }, [staff]);
-  useEffect(() => { localStorage.setItem(STORAGE_KEYS.BITRIX_CONFIG, JSON.stringify(bitrixConfig)); }, [bitrixConfig]);
-  useEffect(() => { localStorage.setItem(STORAGE_KEYS.SHIFTS, JSON.stringify(shifts)); }, [shifts]);
-  useEffect(() => { localStorage.setItem(STORAGE_KEYS.WORK_SESSIONS, JSON.stringify(sessions)); }, [sessions]);
+  useEffect(() => {
+    const initData = async () => {
+      setDbStatus('loading');
+      
+      if (bitrixConfig.cloud?.enabled && bitrixConfig.cloud.apiUrl) {
+        const cloudData = await dbService.loadFromCloud(bitrixConfig.cloud);
+        if (cloudData) {
+          setOrders(cloudData.orders || []);
+          setStaff(cloudData.staff || []);
+          setSessions(cloudData.sessions || []);
+          setShifts(cloudData.shifts || {});
+          setDbStatus('online');
+          
+          localStorage.setItem(STORAGE_KEYS.CACHE_ORDERS, JSON.stringify(cloudData.orders || []));
+          localStorage.setItem(STORAGE_KEYS.CACHE_STAFF, JSON.stringify(cloudData.staff || []));
+          return;
+        } else {
+          setDbStatus('offline');
+        }
+      }
+
+      const cachedOrders = JSON.parse(localStorage.getItem(STORAGE_KEYS.CACHE_ORDERS) || '[]');
+      const cachedStaff = JSON.parse(localStorage.getItem(STORAGE_KEYS.CACHE_STAFF) || '[]');
+      const cachedShifts = JSON.parse(localStorage.getItem(STORAGE_KEYS.CACHE_SHIFTS) || '{}');
+      const cachedSessions = JSON.parse(localStorage.getItem(STORAGE_KEYS.CACHE_SESSIONS) || '[]');
+      
+      setOrders(cachedOrders);
+      setStaff(cachedStaff);
+      setShifts(cachedShifts);
+      setSessions(cachedSessions);
+      if (!bitrixConfig.cloud?.enabled) setDbStatus('local');
+    };
+
+    initData();
+  }, [bitrixConfig.cloud?.enabled, bitrixConfig.cloud?.apiUrl]);
+
+  const syncWithCloud = useCallback(async () => {
+    if (!bitrixConfig.cloud?.enabled || !bitrixConfig.cloud?.apiUrl) {
+      localStorage.setItem(STORAGE_KEYS.CACHE_ORDERS, JSON.stringify(orders));
+      localStorage.setItem(STORAGE_KEYS.CACHE_STAFF, JSON.stringify(staff));
+      localStorage.setItem(STORAGE_KEYS.CACHE_SHIFTS, JSON.stringify(shifts));
+      localStorage.setItem(STORAGE_KEYS.CACHE_SESSIONS, JSON.stringify(sessions));
+      return;
+    }
+
+    setIsSyncing(true);
+    const data = { orders, staff, sessions, shifts };
+    const result = await dbService.saveToCloud(bitrixConfig.cloud, data);
+    
+    if (result && result.success) {
+      setDbStatus('online');
+      localStorage.setItem(STORAGE_KEYS.CACHE_ORDERS, JSON.stringify(orders));
+    } else {
+      setDbStatus('offline');
+    }
+    setIsSyncing(false);
+  }, [orders, staff, sessions, shifts, bitrixConfig.cloud]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (dbStatus !== 'loading') syncWithCloud();
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, [orders, staff, shifts, sessions, syncWithCloud, dbStatus]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.BITRIX_CONFIG, JSON.stringify(bitrixConfig));
+  }, [bitrixConfig]);
+
   useEffect(() => {
     if (user) localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(user));
     else localStorage.removeItem(STORAGE_KEYS.USER);
   }, [user]);
 
-  const activeSession = useMemo(() => {
-    if (!user) return null;
-    return sessions.find((s: WorkSession) => s.userId === user.id && !s.endTime);
-  }, [sessions, user]);
-
-  const triggerShiftFlash = () => {
-    setFlashShiftBtn(true);
-    setTimeout(() => setFlashShiftBtn(false), 2000);
-  };
-
-  const toggleWorkSession = () => {
-    if (!user) return;
-    const today = new Date().toISOString().split('T')[0];
-    const isScheduled = shifts[user.id]?.[today];
-
-    if (!activeSession && !isScheduled && user.role !== UserRole.COMPANY_ADMIN) {
-      alert('Внимание: Вас нет в графике на сегодня. Смена не может быть начата. Обратитесь к администратору.');
-      return;
-    }
-
-    if (activeSession) {
-      setSessions((prev: WorkSession[]) => prev.map((s: WorkSession) => s.id === activeSession.id ? { ...s, endTime: new Date().toISOString() } : s));
-    } else {
-      const newSession: WorkSession = { id: Math.random().toString(36).substr(2, 9), userId: user.id, startTime: new Date().toISOString() };
-      setSessions((prev: WorkSession[]) => [...prev, newSession]);
-    }
-  };
-
-  const toggleShift = (userId: string, date: string) => {
-    setShifts((prev: Record<string, Record<string, boolean>>) => {
-      const userShifts = prev[userId] || {};
-      return { ...prev, [userId]: { ...userShifts, [date]: !userShifts[date] } };
-    });
-  };
-
-  const updateBitrixTask = async (externalTaskId: string, fields: any) => {
-    if (!bitrixConfig.enabled || !bitrixConfig.webhookUrl || !externalTaskId) return;
-    let url = bitrixConfig.webhookUrl.trim();
-    if (!url.endsWith('/')) url += '/';
-    try {
-      await fetch(`${url}tasks.task.update`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ taskId: externalTaskId, fields })
-      });
-    } catch (err) { console.error("Failed to sync with B24:", err); }
-  };
-
-  const addBitrixTaskComment = async (externalTaskId: string, message: string) => {
-    if (!bitrixConfig.enabled || !bitrixConfig.webhookUrl || !externalTaskId) return;
-    let url = bitrixConfig.webhookUrl.trim();
-    if (!url.endsWith('/')) url += '/';
-    try {
-      const authorPrefix = user ? `[${user.name}]: ` : '';
-      await fetch(`${url}task.commentitem.add`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ taskId: externalTaskId, fields: { POST_MESSAGE: authorPrefix + message } })
-      });
-    } catch (err) { console.error("Failed to add B24 comment:", err); }
-  };
-
-  const updateBitrixTaskStatus = async (externalTaskId: string, newStatus: TaskStatus | 'RESUME') => {
-    let b24Status = '2'; 
-    if (newStatus === TaskStatus.COMPLETED) b24Status = '5';
-    else if (newStatus === TaskStatus.IN_PROGRESS || newStatus === 'RESUME') b24Status = '3';
-    else if (newStatus === TaskStatus.PAUSED) b24Status = '2';
-    await updateBitrixTask(externalTaskId, { STATUS: b24Status });
-  };
-
-  const handleRegister = (companyName: string, email: string, pass: string) => {
-    const normalizedEmail = email?.trim().toLowerCase();
-    if (!normalizedEmail) return;
-    if (staff.some((s: User) => s.email?.toLowerCase() === normalizedEmail)) { alert("Пользователь с таким email уже зарегистрирован."); return; }
-    const newAdmin: User = {
-      id: Math.random().toString(36).substr(2, 9),
-      name: 'Администратор',
-      email: normalizedEmail,
-      role: UserRole.COMPANY_ADMIN,
-      companyId: 'c-' + Math.random().toString(36).substr(2, 5),
-      companyName: companyName,
-      password: pass,
-      isLocked: false,
-      source: 'MANUAL'
-    };
-    setStaff((prev: User[]) => [...prev, newAdmin]);
-    setBitrixConfig((prev: BitrixConfig) => ({ ...prev, portalName: companyName }));
-    setUser(newAdmin);
-    setIsSiteAdmin(false);
-  };
-
-  const handleLogin = (role: UserRole, email?: string, password?: string) => {
-    if (role === UserRole.SITE_ADMIN) {
-      setIsSiteAdmin(true);
-      const sa = { id: 'sa', name: 'Иван Бобкин', email: 'ivanbobkin@system.ru', role: UserRole.SITE_ADMIN };
-      setUser(sa);
-      return;
-    }
-    if (email) {
-      const normalizedEmail = email.trim().toLowerCase();
-      const foundUser = staff.find((s: User) => s.email?.toLowerCase() === normalizedEmail);
-      if (!foundUser) return "Пользователь с таким email не найден";
-      if (foundUser.isLocked) return "Доступ заблокирован администратором";
-      if (!foundUser.password) return "Доступ еще не предоставлен";
-      if (foundUser.password !== password) return "Неверный пароль";
-      setIsSiteAdmin(false);
-      setUser(foundUser);
-      return;
-    }
-    return "Введите данные для входа";
-  };
-
-  const handleLogout = () => { setUser(null); setIsSiteAdmin(false); localStorage.removeItem(STORAGE_KEYS.USER); setCurrentPage('dashboard'); };
-
-  const updateStaffMember = (userId: string, updates: Partial<User>) => {
-    setStaff((prev: User[]) => prev.map((u: User) => u.id === userId ? { ...u, ...updates } : u));
-    if (user && user.id === userId) setUser((prev: User | null) => prev ? { ...prev, ...updates } : null);
-  };
-
-  const syncBitrixUsers = async () => {
-    if (!bitrixConfig.enabled || !bitrixConfig.webhookUrl) return -1;
-    let url = bitrixConfig.webhookUrl.trim();
-    if (!url.endsWith('/')) url += '/';
-    try {
-      const response = await fetch(`${url}user.get`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filter: { "ACTIVE": "Y" } }) });
-      const data = await response.json();
-      if (!data || !data.result) return 0;
-      const bitrixUsers: User[] = (data.result || []).map((u: any) => {
-        const existing = staff.find((s: User) => s.id === String(u.ID));
-        return {
-          id: String(u.ID),
-          name: `${u.NAME || ''} ${u.LAST_NAME || ''}`.trim() || u.EMAIL || 'Сотрудник ' + u.ID,
-          email: u.EMAIL || '',
-          role: UserRole.EMPLOYEE,
-          avatar: u.PERSONAL_PHOTO || undefined,
-          position: u.WORK_POSITION || '',
-          source: 'BITRIX24',
-          companyId: user?.companyId,
-          isProduction: existing?.isProduction || false,
-          isProductionHead: existing?.isProductionHead || false,
-          password: existing?.password,
-          isLocked: existing?.isLocked || false
-        };
-      });
-      setStaff((prev: User[]) => {
-        const manualUsers = prev.filter((u: User) => u.source === 'MANUAL' || u.role === UserRole.COMPANY_ADMIN || (u.companyId !== user?.companyId));
-        const manualEmails = new Set(manualUsers.map((u: User) => u.email?.toLowerCase() || ''));
-        const uniqueBitrixUsers = bitrixUsers.filter((bu: User) => bu.email && !manualEmails.has(bu.email.toLowerCase()));
-        return [...manualUsers, ...uniqueBitrixUsers];
-      });
-      return bitrixUsers.length;
-    } catch (err) { return -1; }
-  };
-
-  const syncBitrixOrders = async () => {
-    if (!bitrixConfig.enabled || !bitrixConfig.webhookUrl) return -1;
-    let url = bitrixConfig.webhookUrl.trim();
-    if (!url.endsWith('/')) url += '/';
-    
-    try {
-      const dealRes = await fetch(`${url}crm.deal.list`, { 
-        method: 'POST', 
-        headers: { 'Content-Type': 'application/json' }, 
-        body: JSON.stringify({ 
-          filter: bitrixConfig.triggerStageIds?.length > 0 ? { "STAGE_ID": bitrixConfig.triggerStageIds } : {}, 
-          select: ["ID", "TITLE", "CLOSEDATE", "COMMENTS", "STAGE_ID", "CATEGORY_ID", "CONTACT_ID", "COMPANY_ID", ...Object.values(bitrixConfig.fieldMapping)] 
-        }) 
-      });
-      
-      const dealData = await dealRes.json();
-      if (!dealData || !dealData.result) return 0;
-      
-      const fetchedDeals = dealData.result;
-      const newOrders: Order[] = [];
-      const mapping = bitrixConfig.fieldMapping;
-
-      for (const deal of fetchedDeals) {
-        if (orders.find((o: Order) => o.externalId === String(deal.ID))) continue;
-        
-        let clientName = String(deal[mapping.clientName] || deal.TITLE || 'Без имени');
-        
-        if (mapping.clientName.startsWith('CONTACT_') && deal.CONTACT_ID) {
-           const contactField = mapping.clientName.replace('CONTACT_', '');
-           const cRes = await fetch(`${url}crm.contact.get`, { method: 'POST', body: JSON.stringify({ id: deal.CONTACT_ID }) });
-           const cData = await cRes.json();
-           if (cData.result && cData.result[contactField]) clientName = cData.result[contactField];
-        } else if (mapping.clientName.startsWith('COMPANY_') && deal.COMPANY_ID) {
-           const companyField = mapping.clientName.replace('COMPANY_', '');
-           const compRes = await fetch(`${url}crm.company.get`, { method: 'POST', body: JSON.stringify({ id: deal.COMPANY_ID }) });
-           const compData = await compRes.json();
-           if (compData.result && compData.result[companyField]) clientName = compData.result[companyField];
-        }
-
-        const taskRes = await fetch(`${url}tasks.task.list`, { 
-          method: 'POST', 
-          headers: { 'Content-Type': 'application/json' }, 
-          body: JSON.stringify({ 
-            filter: { "UF_CRM_TASK": [`D_${deal.ID}`] }, 
-            select: ["ID", "TITLE", "STATUS", "RESPONSIBLE_ID", "ACCOMPLICES"] 
-          }) 
-        });
-        
-        const taskData = await taskRes.json();
-        const b24Tasks = (taskData && taskData.result && taskData.result.tasks) ? taskData.result.tasks : [];
-        
-        const finalTasks: Task[] = b24Tasks.map((bt: any) => {
-          const titleLower = bt.title ? bt.title.toLowerCase() : '';
-          let stage: ProductionStage | null = null;
-          for (const [s, cfg] of Object.entries(STAGE_CONFIG)) { 
-            if (cfg.keywords.some((keyword: string) => titleLower.includes(keyword.toLowerCase()))) { 
-              stage = s as ProductionStage; 
-              break; 
-            } 
-          }
-          if (!stage) return null;
-          return { 
-            id: Math.random().toString(36).substr(2, 9), 
-            orderId: '', 
-            stage, 
-            status: bt.status === '5' ? TaskStatus.COMPLETED : (bt.status === '3' ? TaskStatus.IN_PROGRESS : TaskStatus.PENDING), 
-            externalTaskId: String(bt.id), 
-            title: bt.title || 'Задача из B24', 
-            assignedTo: bt.responsibleId ? String(bt.responsibleId) : undefined, 
-            accompliceIds: bt.accomplices ? bt.accomplices.map((a: any) => String(a)) : [], 
-            details: [], 
-            packages: [] 
-          };
-        }).filter((t: any): t is Task => t !== null);
-
-        if (finalTasks.length > 0) {
-          newOrders.push({ 
-            id: Math.random().toString(36).substr(2, 9), 
-            companyId: user?.companyId || 'c1', 
-            orderNumber: String(deal[mapping.orderNumber] || deal.ID), 
-            clientName, 
-            deadline: deal[mapping.deadline] || new Date().toISOString(), 
-            description: deal[mapping.description] || deal.COMMENTS || '', 
-            priority: 'MEDIUM', 
-            createdAt: new Date().toISOString(), 
-            source: 'BITRIX24', 
-            externalId: String(deal.ID), 
-            externalStageId: String(deal.STAGE_ID), 
-            externalCategoryId: String(deal.CATEGORY_ID), 
-            tasks: finalTasks 
-          });
-        }
-      }
-      if (newOrders.length > 0) { setOrders((prev: Order[]) => [...newOrders, ...prev]); return newOrders.length; }
-      return 0;
-    } catch (err) { return -1; }
+  const updateTaskStatus = (orderId: string, taskId: string, newStatus: TaskStatus | 'RESUME', comment?: string) => {
+    setOrders(prev => prev.map(order => {
+      if (order.id !== orderId) return order;
+      return {
+        ...order,
+        tasks: order.tasks.map(t => {
+          if (t.id !== taskId) return t;
+          const status = newStatus === 'RESUME' ? TaskStatus.IN_PROGRESS : newStatus;
+          const updates: Partial<Task> = { status };
+          if (status === TaskStatus.IN_PROGRESS && !t.startedAt) updates.startedAt = new Date().toISOString();
+          if (status === TaskStatus.COMPLETED) updates.completedAt = new Date().toISOString();
+          if (comment) updates.notes = (t.notes ? t.notes + '\n' : '') + comment;
+          return { ...t, ...updates };
+        })
+      };
+    }));
   };
 
   const updateTaskPlanning = (orderId: string, taskId: string, date: string | undefined, userId: string | undefined, accompliceIds?: string[]) => {
-    setOrders((prev: Order[]) => prev.map((order: Order) => {
+    setOrders(prev => prev.map(order => {
       if (order.id !== orderId) return order;
-      const updatedTasks = order.tasks.map((task: Task) => {
-        if (task.id === taskId) {
-           if (task.externalTaskId && (userId !== task.assignedTo || JSON.stringify(accompliceIds) !== JSON.stringify(task.accompliceIds))) {
-             updateBitrixTask(task.externalTaskId, { RESPONSIBLE_ID: userId || 0, ACCOMPLICES: accompliceIds || [] });
-           }
-           return { ...task, plannedDate: date, assignedTo: userId, accompliceIds: accompliceIds || [] };
-        }
-        return task;
-      });
-      return { ...order, tasks: updatedTasks };
-    }));
-  };
-
-  const updateTaskStatus = (orderId: string, taskId: string, newStatus: TaskStatus | 'RESUME', comment?: string) => {
-    setOrders((prev: Order[]) => prev.map((order: Order) => {
-      if (order.id !== orderId) return order;
-      let updatedOrderTasks = [...order.tasks];
-      const taskIndex = updatedOrderTasks.findIndex((t: Task) => t.id === taskId);
-      if (taskIndex !== -1) {
-        const currentTask = updatedOrderTasks[taskIndex];
-        const statusToApply = newStatus === 'RESUME' ? TaskStatus.IN_PROGRESS : newStatus;
-        let newNotes = currentTask.notes || '';
-        if (comment) {
-          const commentText = `[${new Date().toLocaleString()}] ${user?.name}: ${comment}`;
-          newNotes += `\n${commentText}`;
-          if (currentTask.externalTaskId) addBitrixTaskComment(currentTask.externalTaskId, comment);
-        }
-        if (statusToApply === TaskStatus.COMPLETED && currentTask.externalTaskId) {
-           const details = currentTask.details || [];
-           const pkgs = currentTask.packages || [];
-           const isShipment = currentTask.stage === ProductionStage.SHIPMENT;
-           
-           const scanStats: Record<string, number> = {};
-           details.forEach((d: Detail) => { 
-             if(d.scannedBy) {
-               scanStats[d.scannedBy] = (scanStats[d.scannedBy] || 0) + (d.quantity || 1); 
-             }
-           });
-           
-           const totalScans = Object.values(scanStats).reduce((a, b) => a + b, 0);
-           
-           const participantIds = Array.from(new Set([
-             currentTask.assignedTo, 
-             ...(currentTask.accompliceIds || []),
-             ...Object.keys(scanStats)
-           ])).filter((id): id is string => !!id);
-
-           const report = [
-             `✅ Задача завершена: ${STAGE_CONFIG[currentTask.stage].label}`, 
-             `📅 Дата: ${new Date().toLocaleString('ru-RU')}`, 
-             isShipment 
-               ? `📦 Просканировано упаковок: ${details.length}` 
-               : `📊 Просканировано деталей: ${details.reduce((acc: number, d: Detail) => acc + (d.quantity || 1), 0)}`, 
-             pkgs.length > 0 ? `📦 Создано упаковок: ${pkgs.length} (${pkgs.map((p: Package) => p.name).join(', ')})` : null, 
-             `👥 Участники: ${participantIds.map(id => staff.find((s: User) => s.id === id)?.name || id).join(', ')}`, 
-             `📈 Распределение участия (сканы):`, 
-             ...participantIds.map(id => {
-               const name = staff.find((s: User) => s.id === id)?.name || 'Неизвестно';
-               const pts = scanStats[id] || 0;
-               const pct = totalScans > 0 ? Math.round((pts / totalScans) * 100) : 0;
-               const finalPct = totalScans === 0 && id === currentTask.assignedTo ? 100 : pct;
-               return `- ${name}: ${finalPct}% (${pts} ед.)`;
-             })
-           ].filter(Boolean).join('\n');
-           
-           addBitrixTaskComment(currentTask.externalTaskId, report);
-        }
-        updatedOrderTasks[taskIndex] = { ...currentTask, status: statusToApply, notes: newNotes, startedAt: (statusToApply === TaskStatus.IN_PROGRESS && !currentTask.startedAt) ? new Date().toISOString() : currentTask.startedAt, completedAt: statusToApply === TaskStatus.COMPLETED ? new Date().toISOString() : (newStatus === 'RESUME' ? undefined : currentTask.completedAt) };
-        if (currentTask.externalTaskId) updateBitrixTaskStatus(currentTask.externalTaskId, newStatus);
-      }
-      return { ...order, tasks: updatedOrderTasks };
-    }));
-  };
-
-  const addAccompliceToTask = (orderId: string, taskId: string, userId: string) => {
-    setOrders((prev: Order[]) => prev.map((order: Order) => {
-      if (order.id !== orderId) return order;
-      return { ...order, tasks: order.tasks.map((task: Task) => {
-        if (task.id === taskId) {
-           if (!task.assignedTo) {
-             if (task.externalTaskId) updateBitrixTask(task.externalTaskId, { RESPONSIBLE_ID: userId });
-             return { ...task, assignedTo: userId };
-           }
-           const currentIds = task.accompliceIds || [];
-           if (currentIds.includes(userId)) return task;
-           const updatedIds = [...currentIds, userId];
-           if (task.externalTaskId) updateBitrixTask(task.externalTaskId, { ACCOMPLICES: updatedIds });
-           return { ...task, accompliceIds: updatedIds };
-        }
-        return task;
-      })};
-    }));
-  };
-
-  const updateTaskDetails = (orderId: string, taskId: string, details: Detail[], packages?: Package[]) => {
-    setOrders((prev: Order[]) => prev.map((order: Order) => {
-      if (order.id !== orderId) return order;
-      let updatedTasks = order.tasks.map((task: Task) => {
-        if (task.id === taskId) return { ...task, details, packages: packages || task.packages };
-        return task;
-      });
-      return { ...order, tasks: updatedTasks };
+      return {
+        ...order,
+        tasks: order.tasks.map(t => t.id === taskId ? { ...t, plannedDate: date, assignedTo: userId, accompliceIds: accompliceIds || [] } : t)
+      };
     }));
   };
 
   const updateTaskRate = (orderId: string, taskId: string, rate: number) => {
-    setOrders((prev: Order[]) => prev.map((order: Order) => {
+    setOrders(prev => prev.map(order => {
       if (order.id !== orderId) return order;
-      return { ...order, tasks: order.tasks.map((task: Task) => task.id === taskId ? { ...task, rate } : task) };
+      return {
+        ...order,
+        tasks: order.tasks.map(t => t.id === taskId ? { ...t, rate } : t)
+      };
     }));
   };
 
-  const removeOrderTask = (orderId: string, taskId: string) => {
-    setOrders((prev: Order[]) => prev.map((order: Order) => {
+  const updateTaskDetails = (orderId: string, taskId: string, details: Detail[], packages?: Package[]) => {
+    setOrders(prev => prev.map(order => {
       if (order.id !== orderId) return order;
-      return { ...order, tasks: order.tasks.filter((t: Task) => t.id !== taskId) };
+      return {
+        ...order,
+        tasks: order.tasks.map(t => t.id === taskId ? { ...t, details, packages: packages || t.packages } : t)
+      };
     }));
   };
 
-  if (!user) return <LoginPage onLogin={handleLogin} onRegister={handleRegister} />;
-  if (isSiteAdmin) return <SiteAdmin onLogout={handleLogout} orders={orders} staff={staff} companies={[]} config={bitrixConfig} onUpdateUser={updateStaffMember} onSendMessage={() => {}} />;
+  const addAccomplice = (orderId: string, taskId: string, userId: string) => {
+    setOrders(prev => prev.map(order => {
+      if (order.id !== orderId) return order;
+      return {
+        ...order,
+        tasks: order.tasks.map(t => {
+          if (t.id !== taskId) return t;
+          const current = t.accompliceIds || [];
+          if (current.includes(userId)) return t;
+          return { ...t, accompliceIds: [...current, userId] };
+        })
+      };
+    }));
+  };
+
+  const updateStaffMember = (userId: string, updates: Partial<User>) => {
+    setStaff(prev => prev.map(u => u.id === userId ? { ...u, ...updates } : u));
+  };
+
+  const toggleShift = (userId: string, date: string) => {
+    setShifts(prev => {
+      const userShifts = { ...(prev[userId] || {}) };
+      userShifts[date] = !userShifts[date];
+      return { ...prev, [userId]: userShifts };
+    });
+  };
+
+  const activeSession = useMemo(() => {
+    if (!user) return null;
+    return sessions.find((s) => s.userId === user.id && !s.endTime);
+  }, [sessions, user]);
+
+  const toggleWorkSession = () => {
+    if (!user) return;
+    if (activeSession) {
+      setSessions(prev => prev.map(s => s.id === activeSession.id ? { ...s, endTime: new Date().toISOString() } : s));
+    } else {
+      const newSession: WorkSession = { 
+        id: 'SESS-' + Math.random().toString(36).substr(2, 9), 
+        userId: user.id, 
+        startTime: new Date().toISOString() 
+      };
+      setSessions(prev => [...prev, newSession]);
+    }
+  };
+
+  if (!user) return <LoginPage onLogin={(role, email, pass) => {
+    if (role === UserRole.SITE_ADMIN) {
+      setUser({ id: 'sa', name: 'Администратор', email: 'admin@system.ru', role: UserRole.SITE_ADMIN });
+      return;
+    }
+    const foundUser = staff.find((s) => s.email?.toLowerCase() === email?.toLowerCase());
+    if (foundUser && foundUser.password === pass) {
+      setUser(foundUser);
+    } else {
+      return "Неверный логин или пароль";
+    }
+  }} onRegister={() => {}} />;
 
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden text-slate-900">
-      <Sidebar currentPage={currentPage} onPageChange={setCurrentPage} onLogout={handleLogout} user={user} bitrixConfig={bitrixConfig} />
+      <Sidebar currentPage={currentPage} onPageChange={setCurrentPage} onLogout={() => setUser(null)} user={user} bitrixConfig={bitrixConfig} />
       <main className="flex-1 flex flex-col min-w-0">
-        <header className="h-16 bg-white border-b border-slate-200 px-8 flex items-center justify-between shadow-sm shrink-0 z-10">
+        <header className="h-16 bg-white border-b border-slate-200 px-8 flex items-center justify-between shadow-sm z-30">
           <div className="flex items-center gap-4">
-             <h1 className="text-xl font-bold text-slate-800 uppercase tracking-tight">
-              {currentPage === 'dashboard' && 'Дашборд'}
-              {currentPage === 'planning' && 'Планирование'}
-              {currentPage === 'schedule' && 'График работы'}
-              {currentPage === 'production' && 'Производство'}
-              {currentPage === 'reports' && 'Отчеты'}
-              {currentPage === 'salaries' && 'Зарплата'}
-              {currentPage === 'users' && 'Сотрудники'}
-              {currentPage === 'archive' && 'Архив'}
-              {currentPage === 'settings' && 'Настройки'}
-            </h1>
-            <div className="h-6 w-px bg-slate-200"></div>
-            <span className="text-xs font-black text-slate-400 uppercase tracking-widest">{bitrixConfig.portalName || user.companyName}</span>
+             <h1 className="text-xl font-bold uppercase tracking-tight text-slate-800">{currentPage}</h1>
+             <div className="h-4 w-px bg-slate-200"></div>
+             <div className="flex items-center gap-2">
+                {dbStatus === 'loading' && <div className="flex items-center gap-1.5 text-blue-500 animate-pulse"><Loader2 size={14} className="animate-spin"/> <span className="text-[10px] font-black uppercase">Загрузка из облака...</span></div>}
+                {dbStatus === 'online' && <div className="flex items-center gap-1.5 text-emerald-500"><CloudCheck size={14}/> <span className="text-[10px] font-black uppercase">Timeweb: OK</span></div>}
+                {dbStatus === 'offline' && <div className="flex items-center gap-1.5 text-rose-500"><CloudOff size={14}/> <span className="text-[10px] font-black uppercase">Ошибка связи</span></div>}
+                {dbStatus === 'local' && <div className="flex items-center gap-1.5 text-amber-500"><Database size={14}/> <span className="text-[10px] font-black uppercase">Локальный кэш</span></div>}
+             </div>
           </div>
+
           <div className="flex items-center gap-6">
-            <button 
-              onClick={toggleWorkSession}
-              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase transition-all shadow-lg shadow-blue-500/10 ${
-                activeSession ? 'bg-rose-50 text-rose-600 hover:bg-rose-100' : 'bg-blue-600 text-white hover:bg-blue-700'
-              } ${flashShiftBtn ? 'animate-flash-shift' : ''}`}
-            >
-              {activeSession ? <><LogOut size={16} /> Закончить смену</> : <><LogIn size={16} /> Начать смену</>}
+            {isSyncing && <div className="text-[9px] font-black text-blue-500 animate-pulse uppercase tracking-widest">Синхронизация...</div>}
+            <button onClick={toggleWorkSession} className={`px-4 py-2 rounded-xl text-xs font-black uppercase transition-all shadow-lg ${activeSession ? 'bg-rose-50 text-rose-600' : 'bg-blue-600 text-white'}`}>
+              {activeSession ? 'Закончить смену' : 'Начать смену'}
             </button>
-            
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3">
               <div className="text-right">
-                <div className="text-sm font-semibold text-slate-700">{user.name}</div>
-                <div className="text-[10px] text-slate-400 uppercase tracking-wider">
-                  {user.role === UserRole.COMPANY_ADMIN ? 'Администратор' : (user.isProductionHead ? 'Начальник произв.' : 'Сотрудник')}
-                </div>
+                <div className="text-sm font-semibold">{user.name}</div>
+                <div className="text-[10px] text-slate-400 font-bold uppercase">{user.role}</div>
               </div>
-              <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold border-2 border-white shadow-sm overflow-hidden">
-                {user.avatar ? <img src={user.avatar} className="w-full h-full object-cover" /> : user.name.charAt(0)}
-              </div>
+              <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center font-bold text-blue-600 border-2 border-white shadow-sm">{user.name.charAt(0)}</div>
             </div>
           </div>
         </header>
-        <div className="flex-1 overflow-y-auto p-8 custom-scrollbar relative bg-slate-50">
-          {currentPage === 'dashboard' && <Dashboard orders={orders} staff={staff} />}
-          {currentPage === 'planning' && (
-            <Planning orders={orders} onAddOrder={() => {}} onSyncBitrix={syncBitrixOrders} onUpdateTaskPlanning={updateTaskPlanning} onUpdateTaskRate={updateTaskRate} isBitrixEnabled={bitrixConfig.enabled} bitrixConfig={bitrixConfig} staff={staff.filter((u: User) => u.isProduction && u.companyId === user.companyId)} shifts={shifts} onDeleteTask={removeOrderTask} />
+
+        <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
+          {dbStatus === 'loading' && (
+            <div className="h-full flex flex-col items-center justify-center space-y-4 opacity-50">
+               <Loader2 size={48} className="text-blue-600 animate-spin" />
+               <p className="text-xs font-black uppercase tracking-widest text-slate-400">Подключение к облаку Timeweb...</p>
+            </div>
           )}
-          {currentPage === 'schedule' && (
-            <Schedule staff={staff.filter((s: User) => s.companyId === user.companyId)} currentUser={user} shifts={shifts} onToggleShift={toggleShift} />
+          {dbStatus !== 'loading' && (
+            <>
+              {currentPage === 'dashboard' && <Dashboard orders={orders} staff={staff} />}
+              {currentPage === 'planning' && <Planning orders={orders} onSyncBitrix={async () => 0} onUpdateTaskPlanning={updateTaskPlanning} onUpdateTaskRate={updateTaskRate} isBitrixEnabled={bitrixConfig.enabled} bitrixConfig={bitrixConfig} staff={staff.filter(s => s.isProduction)} shifts={shifts} />}
+              {currentPage === 'schedule' && <Schedule staff={staff} currentUser={user} shifts={shifts} onToggleShift={toggleShift} />}
+              {currentPage === 'production' && <ProductionBoard orders={orders} onUpdateTask={updateTaskStatus} onAddAccomplice={addAccomplice} onUpdateDetails={updateTaskDetails} staff={staff} currentUser={user} onAddB24Comment={async () => {}} isShiftActive={!!activeSession} shifts={shifts} onTriggerShiftFlash={() => {}} />}
+              {currentPage === 'reports' && <Reports orders={orders} staff={staff} workSessions={sessions} />}
+              {currentPage === 'salaries' && <Salaries orders={orders} staff={staff} />}
+              {currentPage === 'users' && <UsersManagement staff={staff} onSync={async () => 0} isBitrixEnabled={bitrixConfig.enabled} onToggleProduction={(id) => updateStaffMember(id, { isProduction: !staff.find(s => s.id === id)?.isProduction })} onUpdateStaff={updateStaffMember} />}
+              {currentPage === 'settings' && <Settings config={bitrixConfig} setConfig={setBitrixConfig} onExport={() => {}} onImport={() => {}} onClear={() => {}} />}
+            </>
           )}
-          {currentPage === 'production' && <ProductionBoard orders={orders.filter((o: Order) => o.companyId === user.companyId)} onUpdateTask={updateTaskStatus} onAddAccomplice={addAccompliceToTask} onUpdateDetails={updateTaskDetails} staff={staff.filter((s: User) => s.companyId === user.companyId)} currentUser={user} onAddB24Comment={addBitrixTaskComment} isShiftActive={!!activeSession} shifts={shifts} onTriggerShiftFlash={triggerShiftFlash} />}
-          {currentPage === 'reports' && <Reports orders={orders.filter((o: Order) => o.companyId === user.companyId)} staff={staff.filter((s: User) => s.companyId === user.companyId)} workSessions={sessions.filter((s: WorkSession) => staff.find((st: User) => st.id === s.userId)?.companyId === user.companyId)} />}
-          {currentPage === 'salaries' && <Salaries orders={orders.filter((o: Order) => o.companyId === user.companyId)} staff={staff.filter((s: User) => s.companyId === user.companyId)} />}
-          {currentPage === 'users' && (
-            <UsersManagement staff={staff.filter((s: User) => s.companyId === user.companyId)} onSync={syncBitrixUsers} isBitrixEnabled={bitrixConfig.enabled} onToggleProduction={(uid) => updateStaffMember(uid, { isProduction: !staff.find((s: User) => s.id === uid)?.isProduction })} onUpdateStaff={updateStaffMember} />
-          )}
-          {currentPage === 'archive' && <Archive orders={orders.filter((o: Order) => o.companyId === user.companyId)} />}
-          {currentPage === 'settings' && <Settings config={bitrixConfig} setConfig={setBitrixConfig} />}
         </div>
       </main>
     </div>
