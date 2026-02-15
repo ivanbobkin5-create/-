@@ -1,6 +1,6 @@
 
 import React, { useMemo } from 'react';
-import { Order, ProductionStage, TaskStatus, User } from '../types';
+import { Order, ProductionStage, TaskStatus, User, Task } from '../types';
 import { STAGE_CONFIG } from '../constants';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { Activity, CheckSquare, ListTodo, Users } from 'lucide-react';
@@ -13,20 +13,19 @@ interface DashboardProps {
 const Dashboard: React.FC<DashboardProps> = ({ orders, staff }) => {
   // Статистика по участкам
   const statsByStage = useMemo(() => {
-    return Object.values(ProductionStage).map(stage => {
-      const active = orders.flatMap(o => o.tasks).filter(t => t.stage === stage && t.status !== TaskStatus.COMPLETED).length;
+    return Object.values(ProductionStage).map((stage: ProductionStage) => {
+      const active = orders.flatMap((o: Order) => o.tasks).filter((t: Task) => t.stage === stage && t.status !== TaskStatus.COMPLETED).length;
       return { name: STAGE_CONFIG[stage].label, value: active };
     });
   }, [orders]);
 
   // Статистика по исполнителям (загрузка)
   const statsByExecutor = useMemo(() => {
-    const activeProductionStaff = staff.filter(s => s.isProduction);
-    const allActiveTasks = orders.flatMap(o => o.tasks).filter(t => t.status !== TaskStatus.COMPLETED);
+    const activeProductionStaff = staff.filter((s: User) => s.isProduction);
+    const allActiveTasks = orders.flatMap((o: Order) => o.tasks).filter((t: Task) => t.status !== TaskStatus.COMPLETED);
 
-    return activeProductionStaff.map(member => {
-      // Fix: accompliceId does not exist on Task. Changed to accompliceIds and used .includes for checking in array.
-      const tasksCount = allActiveTasks.filter(t => t.assignedTo === member.id || t.accompliceIds?.includes(member.id)).length;
+    return activeProductionStaff.map((member: User) => {
+      const tasksCount = allActiveTasks.filter((t: Task) => t.assignedTo === member.id || t.accompliceIds?.includes(member.id)).length;
       return {
         name: member.name.split(' ')[0],
         fullTitle: member.name,
@@ -35,8 +34,8 @@ const Dashboard: React.FC<DashboardProps> = ({ orders, staff }) => {
     }).filter(item => item.value > 0).sort((a, b) => b.value - a.value);
   }, [orders, staff]);
 
-  const totalTasks = orders.flatMap(o => o.tasks).length;
-  const completedTasks = orders.flatMap(o => o.tasks).filter(t => t.status === TaskStatus.COMPLETED).length;
+  const totalTasks = orders.flatMap((o: Order) => o.tasks).length;
+  const completedTasks = orders.flatMap((o: Order) => o.tasks).filter((t: Task) => t.status === TaskStatus.COMPLETED).length;
   const completionRate = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
 
   return (

@@ -25,7 +25,7 @@ import LoginPage from './pages/LoginPage';
 import SiteAdmin from './pages/SiteAdmin';
 import Settings from './pages/Settings';
 import { STAGE_SEQUENCE, STAGE_CONFIG } from './constants';
-import { Mail, Bell, X, Trash2, ExternalLink, MessageSquare, LogIn, LogOut, Clock } from 'lucide-react';
+import { LogIn, LogOut, Trash2 } from 'lucide-react';
 
 const STORAGE_KEYS = {
   ORDERS: 'woodplan_orders',
@@ -110,7 +110,7 @@ const App: React.FC = () => {
 
   const activeSession = useMemo(() => {
     if (!user) return null;
-    return sessions.find(s => s.userId === user.id && !s.endTime);
+    return sessions.find((s: WorkSession) => s.userId === user.id && !s.endTime);
   }, [sessions, user]);
 
   const triggerShiftFlash = () => {
@@ -129,15 +129,15 @@ const App: React.FC = () => {
     }
 
     if (activeSession) {
-      setSessions(prev => prev.map(s => s.id === activeSession.id ? { ...s, endTime: new Date().toISOString() } : s));
+      setSessions((prev: WorkSession[]) => prev.map((s: WorkSession) => s.id === activeSession.id ? { ...s, endTime: new Date().toISOString() } : s));
     } else {
       const newSession: WorkSession = { id: Math.random().toString(36).substr(2, 9), userId: user.id, startTime: new Date().toISOString() };
-      setSessions(prev => [...prev, newSession]);
+      setSessions((prev: WorkSession[]) => [...prev, newSession]);
     }
   };
 
   const toggleShift = (userId: string, date: string) => {
-    setShifts(prev => {
+    setShifts((prev: Record<string, Record<string, boolean>>) => {
       const userShifts = prev[userId] || {};
       return { ...prev, [userId]: { ...userShifts, [date]: !userShifts[date] } };
     });
@@ -181,7 +181,7 @@ const App: React.FC = () => {
   const handleRegister = (companyName: string, email: string, pass: string) => {
     const normalizedEmail = email?.trim().toLowerCase();
     if (!normalizedEmail) return;
-    if (staff.some(s => s.email?.toLowerCase() === normalizedEmail)) { alert("Пользователь с таким email уже зарегистрирован."); return; }
+    if (staff.some((s: User) => s.email?.toLowerCase() === normalizedEmail)) { alert("Пользователь с таким email уже зарегистрирован."); return; }
     const newAdmin: User = {
       id: Math.random().toString(36).substr(2, 9),
       name: 'Администратор',
@@ -193,8 +193,8 @@ const App: React.FC = () => {
       isLocked: false,
       source: 'MANUAL'
     };
-    setStaff(prev => [...prev, newAdmin]);
-    setBitrixConfig(prev => ({ ...prev, portalName: companyName }));
+    setStaff((prev: User[]) => [...prev, newAdmin]);
+    setBitrixConfig((prev: BitrixConfig) => ({ ...prev, portalName: companyName }));
     setUser(newAdmin);
     setIsSiteAdmin(false);
   };
@@ -208,7 +208,7 @@ const App: React.FC = () => {
     }
     if (email) {
       const normalizedEmail = email.trim().toLowerCase();
-      const foundUser = staff.find(s => s.email?.toLowerCase() === normalizedEmail);
+      const foundUser = staff.find((s: User) => s.email?.toLowerCase() === normalizedEmail);
       if (!foundUser) return "Пользователь с таким email не найден";
       if (foundUser.isLocked) return "Доступ заблокирован администратором";
       if (!foundUser.password) return "Доступ еще не предоставлен";
@@ -223,8 +223,8 @@ const App: React.FC = () => {
   const handleLogout = () => { setUser(null); setIsSiteAdmin(false); localStorage.removeItem(STORAGE_KEYS.USER); setCurrentPage('dashboard'); };
 
   const updateStaffMember = (userId: string, updates: Partial<User>) => {
-    setStaff(prev => prev.map(u => u.id === userId ? { ...u, ...updates } : u));
-    if (user && user.id === userId) setUser(prev => prev ? { ...prev, ...updates } : null);
+    setStaff((prev: User[]) => prev.map((u: User) => u.id === userId ? { ...u, ...updates } : u));
+    if (user && user.id === userId) setUser((prev: User | null) => prev ? { ...prev, ...updates } : null);
   };
 
   const syncBitrixUsers = async () => {
@@ -236,7 +236,7 @@ const App: React.FC = () => {
       const data = await response.json();
       if (!data || !data.result) return 0;
       const bitrixUsers: User[] = (data.result || []).map((u: any) => {
-        const existing = staff.find(s => s.id === String(u.ID));
+        const existing = staff.find((s: User) => s.id === String(u.ID));
         return {
           id: String(u.ID),
           name: `${u.NAME || ''} ${u.LAST_NAME || ''}`.trim() || u.EMAIL || 'Сотрудник ' + u.ID,
@@ -252,10 +252,10 @@ const App: React.FC = () => {
           isLocked: existing?.isLocked || false
         };
       });
-      setStaff(prev => {
-        const manualUsers = prev.filter(u => u.source === 'MANUAL' || u.role === UserRole.COMPANY_ADMIN || (u.companyId !== user?.companyId));
-        const manualEmails = new Set(manualUsers.map(u => u.email?.toLowerCase() || ''));
-        const uniqueBitrixUsers = bitrixUsers.filter(bu => bu.email && !manualEmails.has(bu.email.toLowerCase()));
+      setStaff((prev: User[]) => {
+        const manualUsers = prev.filter((u: User) => u.source === 'MANUAL' || u.role === UserRole.COMPANY_ADMIN || (u.companyId !== user?.companyId));
+        const manualEmails = new Set(manualUsers.map((u: User) => u.email?.toLowerCase() || ''));
+        const uniqueBitrixUsers = bitrixUsers.filter((bu: User) => bu.email && !manualEmails.has(bu.email.toLowerCase()));
         return [...manualUsers, ...uniqueBitrixUsers];
       });
       return bitrixUsers.length;
@@ -285,11 +285,10 @@ const App: React.FC = () => {
       const mapping = bitrixConfig.fieldMapping;
 
       for (const deal of fetchedDeals) {
-        if (orders.find(o => o.externalId === String(deal.ID))) continue;
+        if (orders.find((o: Order) => o.externalId === String(deal.ID))) continue;
         
         let clientName = String(deal[mapping.clientName] || deal.TITLE || 'Без имени');
         
-        // Пытаемся подтянуть данные из контакта/компании если маппинг указывает на них
         if (mapping.clientName.startsWith('CONTACT_') && deal.CONTACT_ID) {
            const contactField = mapping.clientName.replace('CONTACT_', '');
            const cRes = await fetch(`${url}crm.contact.get`, { method: 'POST', body: JSON.stringify({ id: deal.CONTACT_ID }) });
@@ -318,7 +317,7 @@ const App: React.FC = () => {
           const titleLower = bt.title ? bt.title.toLowerCase() : '';
           let stage: ProductionStage | null = null;
           for (const [s, cfg] of Object.entries(STAGE_CONFIG)) { 
-            if (cfg.keywords.some(keyword => titleLower.includes(keyword.toLowerCase()))) { 
+            if (cfg.keywords.some((keyword: string) => titleLower.includes(keyword.toLowerCase()))) { 
               stage = s as ProductionStage; 
               break; 
             } 
@@ -336,7 +335,7 @@ const App: React.FC = () => {
             details: [], 
             packages: [] 
           };
-        }).filter((t): t is Task => t !== null);
+        }).filter((t: any): t is Task => t !== null);
 
         if (finalTasks.length > 0) {
           newOrders.push({ 
@@ -356,15 +355,15 @@ const App: React.FC = () => {
           });
         }
       }
-      if (newOrders.length > 0) { setOrders(prev => [...newOrders, ...prev]); return newOrders.length; }
+      if (newOrders.length > 0) { setOrders((prev: Order[]) => [...newOrders, ...prev]); return newOrders.length; }
       return 0;
     } catch (err) { return -1; }
   };
 
   const updateTaskPlanning = (orderId: string, taskId: string, date: string | undefined, userId: string | undefined, accompliceIds?: string[]) => {
-    setOrders(prev => prev.map(order => {
+    setOrders((prev: Order[]) => prev.map((order: Order) => {
       if (order.id !== orderId) return order;
-      const updatedTasks = order.tasks.map(task => {
+      const updatedTasks = order.tasks.map((task: Task) => {
         if (task.id === taskId) {
            if (task.externalTaskId && (userId !== task.assignedTo || JSON.stringify(accompliceIds) !== JSON.stringify(task.accompliceIds))) {
              updateBitrixTask(task.externalTaskId, { RESPONSIBLE_ID: userId || 0, ACCOMPLICES: accompliceIds || [] });
@@ -378,10 +377,10 @@ const App: React.FC = () => {
   };
 
   const updateTaskStatus = (orderId: string, taskId: string, newStatus: TaskStatus | 'RESUME', comment?: string) => {
-    setOrders(prev => prev.map(order => {
+    setOrders((prev: Order[]) => prev.map((order: Order) => {
       if (order.id !== orderId) return order;
       let updatedOrderTasks = [...order.tasks];
-      const taskIndex = updatedOrderTasks.findIndex(t => t.id === taskId);
+      const taskIndex = updatedOrderTasks.findIndex((t: Task) => t.id === taskId);
       if (taskIndex !== -1) {
         const currentTask = updatedOrderTasks[taskIndex];
         const statusToApply = newStatus === 'RESUME' ? TaskStatus.IN_PROGRESS : newStatus;
@@ -397,7 +396,7 @@ const App: React.FC = () => {
            const isShipment = currentTask.stage === ProductionStage.SHIPMENT;
            
            const scanStats: Record<string, number> = {};
-           details.forEach(d => { 
+           details.forEach((d: Detail) => { 
              if(d.scannedBy) {
                scanStats[d.scannedBy] = (scanStats[d.scannedBy] || 0) + (d.quantity || 1); 
              }
@@ -416,12 +415,12 @@ const App: React.FC = () => {
              `📅 Дата: ${new Date().toLocaleString('ru-RU')}`, 
              isShipment 
                ? `📦 Просканировано упаковок: ${details.length}` 
-               : `📊 Просканировано деталей: ${details.reduce((acc, d) => acc + (d.quantity || 1), 0)}`, 
-             pkgs.length > 0 ? `📦 Создано упаковок: ${pkgs.length} (${pkgs.map(p => p.name).join(', ')})` : null, 
-             `👥 Участники: ${participantIds.map(id => staff.find(s => s.id === id)?.name || id).join(', ')}`, 
+               : `📊 Просканировано деталей: ${details.reduce((acc: number, d: Detail) => acc + (d.quantity || 1), 0)}`, 
+             pkgs.length > 0 ? `📦 Создано упаковок: ${pkgs.length} (${pkgs.map((p: Package) => p.name).join(', ')})` : null, 
+             `👥 Участники: ${participantIds.map(id => staff.find((s: User) => s.id === id)?.name || id).join(', ')}`, 
              `📈 Распределение участия (сканы):`, 
              ...participantIds.map(id => {
-               const name = staff.find(s => s.id === id)?.name || 'Неизвестно';
+               const name = staff.find((s: User) => s.id === id)?.name || 'Неизвестно';
                const pts = scanStats[id] || 0;
                const pct = totalScans > 0 ? Math.round((pts / totalScans) * 100) : 0;
                const finalPct = totalScans === 0 && id === currentTask.assignedTo ? 100 : pct;
@@ -439,9 +438,9 @@ const App: React.FC = () => {
   };
 
   const addAccompliceToTask = (orderId: string, taskId: string, userId: string) => {
-    setOrders(prev => prev.map(order => {
+    setOrders((prev: Order[]) => prev.map((order: Order) => {
       if (order.id !== orderId) return order;
-      return { ...order, tasks: order.tasks.map(task => {
+      return { ...order, tasks: order.tasks.map((task: Task) => {
         if (task.id === taskId) {
            if (!task.assignedTo) {
              if (task.externalTaskId) updateBitrixTask(task.externalTaskId, { RESPONSIBLE_ID: userId });
@@ -459,9 +458,9 @@ const App: React.FC = () => {
   };
 
   const updateTaskDetails = (orderId: string, taskId: string, details: Detail[], packages?: Package[]) => {
-    setOrders(prev => prev.map(order => {
+    setOrders((prev: Order[]) => prev.map((order: Order) => {
       if (order.id !== orderId) return order;
-      let updatedTasks = order.tasks.map(task => {
+      let updatedTasks = order.tasks.map((task: Task) => {
         if (task.id === taskId) return { ...task, details, packages: packages || task.packages };
         return task;
       });
@@ -470,16 +469,16 @@ const App: React.FC = () => {
   };
 
   const updateTaskRate = (orderId: string, taskId: string, rate: number) => {
-    setOrders(prev => prev.map(order => {
+    setOrders((prev: Order[]) => prev.map((order: Order) => {
       if (order.id !== orderId) return order;
-      return { ...order, tasks: order.tasks.map(task => task.id === taskId ? { ...task, rate } : task) };
+      return { ...order, tasks: order.tasks.map((task: Task) => task.id === taskId ? { ...task, rate } : task) };
     }));
   };
 
   const removeOrderTask = (orderId: string, taskId: string) => {
-    setOrders(prev => prev.map(order => {
+    setOrders((prev: Order[]) => prev.map((order: Order) => {
       if (order.id !== orderId) return order;
-      return { ...order, tasks: order.tasks.filter(t => t.id !== taskId) };
+      return { ...order, tasks: order.tasks.filter((t: Task) => t.id !== taskId) };
     }));
   };
 
@@ -532,18 +531,18 @@ const App: React.FC = () => {
         <div className="flex-1 overflow-y-auto p-8 custom-scrollbar relative bg-slate-50">
           {currentPage === 'dashboard' && <Dashboard orders={orders} staff={staff} />}
           {currentPage === 'planning' && (
-            <Planning orders={orders} onAddOrder={() => {}} onSyncBitrix={syncBitrixOrders} onUpdateTaskPlanning={updateTaskPlanning} onUpdateTaskRate={updateTaskRate} isBitrixEnabled={bitrixConfig.enabled} bitrixConfig={bitrixConfig} staff={staff.filter(u => u.isProduction && u.companyId === user.companyId)} shifts={shifts} onDeleteTask={removeOrderTask} />
+            <Planning orders={orders} onAddOrder={() => {}} onSyncBitrix={syncBitrixOrders} onUpdateTaskPlanning={updateTaskPlanning} onUpdateTaskRate={updateTaskRate} isBitrixEnabled={bitrixConfig.enabled} bitrixConfig={bitrixConfig} staff={staff.filter((u: User) => u.isProduction && u.companyId === user.companyId)} shifts={shifts} onDeleteTask={removeOrderTask} />
           )}
           {currentPage === 'schedule' && (
-            <Schedule staff={staff.filter(s => s.companyId === user.companyId)} currentUser={user} shifts={shifts} onToggleShift={toggleShift} />
+            <Schedule staff={staff.filter((s: User) => s.companyId === user.companyId)} currentUser={user} shifts={shifts} onToggleShift={toggleShift} />
           )}
-          {currentPage === 'production' && <ProductionBoard orders={orders.filter(o => o.companyId === user.companyId)} onUpdateTask={updateTaskStatus} onAddAccomplice={addAccompliceToTask} onUpdateDetails={updateTaskDetails} staff={staff.filter(s => s.companyId === user.companyId)} currentUser={user} onAddB24Comment={addBitrixTaskComment} isShiftActive={!!activeSession} shifts={shifts} onTriggerShiftFlash={triggerShiftFlash} />}
-          {currentPage === 'reports' && <Reports orders={orders.filter(o => o.companyId === user.companyId)} staff={staff.filter(s => s.companyId === user.companyId)} workSessions={sessions.filter(s => staff.find(st => st.id === s.userId)?.companyId === user.companyId)} />}
-          {currentPage === 'salaries' && <Salaries orders={orders.filter(o => o.companyId === user.companyId)} staff={staff.filter(s => s.companyId === user.companyId)} />}
+          {currentPage === 'production' && <ProductionBoard orders={orders.filter((o: Order) => o.companyId === user.companyId)} onUpdateTask={updateTaskStatus} onAddAccomplice={addAccompliceToTask} onUpdateDetails={updateTaskDetails} staff={staff.filter((s: User) => s.companyId === user.companyId)} currentUser={user} onAddB24Comment={addBitrixTaskComment} isShiftActive={!!activeSession} shifts={shifts} onTriggerShiftFlash={triggerShiftFlash} />}
+          {currentPage === 'reports' && <Reports orders={orders.filter((o: Order) => o.companyId === user.companyId)} staff={staff.filter((s: User) => s.companyId === user.companyId)} workSessions={sessions.filter((s: WorkSession) => staff.find((st: User) => st.id === s.userId)?.companyId === user.companyId)} />}
+          {currentPage === 'salaries' && <Salaries orders={orders.filter((o: Order) => o.companyId === user.companyId)} staff={staff.filter((s: User) => s.companyId === user.companyId)} />}
           {currentPage === 'users' && (
-            <UsersManagement staff={staff.filter(s => s.companyId === user.companyId)} onSync={syncBitrixUsers} isBitrixEnabled={bitrixConfig.enabled} onToggleProduction={(uid) => updateStaffMember(uid, { isProduction: !staff.find(s => s.id === uid)?.isProduction })} onUpdateStaff={updateStaffMember} />
+            <UsersManagement staff={staff.filter((s: User) => s.companyId === user.companyId)} onSync={syncBitrixUsers} isBitrixEnabled={bitrixConfig.enabled} onToggleProduction={(uid) => updateStaffMember(uid, { isProduction: !staff.find((s: User) => s.id === uid)?.isProduction })} onUpdateStaff={updateStaffMember} />
           )}
-          {currentPage === 'archive' && <Archive orders={orders.filter(o => o.companyId === user.companyId)} />}
+          {currentPage === 'archive' && <Archive orders={orders.filter((o: Order) => o.companyId === user.companyId)} />}
           {currentPage === 'settings' && <Settings config={bitrixConfig} setConfig={setBitrixConfig} />}
         </div>
       </main>
