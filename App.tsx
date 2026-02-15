@@ -150,6 +150,20 @@ const App: React.FC = () => {
     else localStorage.removeItem(STORAGE_KEYS.USER);
   }, [user]);
 
+  const addOrder = (order: Order) => {
+    setOrders(prev => [...prev, order]);
+  };
+
+  const deleteTask = (orderId: string, taskId: string) => {
+    setOrders(prev => prev.map(o => {
+      if (o.id !== orderId) return o;
+      return {
+        ...o,
+        tasks: o.tasks.filter(t => t.id !== taskId)
+      };
+    }));
+  };
+
   const updateTaskStatus = (orderId: string, taskId: string, newStatus: TaskStatus | 'RESUME', comment?: string) => {
     setOrders(prev => prev.map(order => {
       if (order.id !== orderId) return order;
@@ -298,7 +312,20 @@ const App: React.FC = () => {
           {dbStatus !== 'loading' && (
             <>
               {currentPage === 'dashboard' && <Dashboard orders={orders} staff={staff} />}
-              {currentPage === 'planning' && <Planning orders={orders} onSyncBitrix={async () => 0} onUpdateTaskPlanning={updateTaskPlanning} onUpdateTaskRate={updateTaskRate} isBitrixEnabled={bitrixConfig.enabled} bitrixConfig={bitrixConfig} staff={staff.filter(s => s.isProduction)} shifts={shifts} />}
+              {currentPage === 'planning' && (
+                <Planning 
+                  orders={orders} 
+                  onAddOrder={addOrder}
+                  onSyncBitrix={async () => 0} 
+                  onUpdateTaskPlanning={updateTaskPlanning} 
+                  onUpdateTaskRate={updateTaskRate} 
+                  onDeleteTask={deleteTask}
+                  isBitrixEnabled={bitrixConfig.enabled} 
+                  bitrixConfig={bitrixConfig} 
+                  staff={staff.filter(s => s.isProduction)} 
+                  shifts={shifts} 
+                />
+              )}
               {currentPage === 'schedule' && <Schedule staff={staff} currentUser={user} shifts={shifts} onToggleShift={toggleShift} />}
               {currentPage === 'production' && <ProductionBoard orders={orders} onUpdateTask={updateTaskStatus} onAddAccomplice={addAccomplice} onUpdateDetails={updateTaskDetails} staff={staff} currentUser={user} onAddB24Comment={async () => {}} isShiftActive={!!activeSession} shifts={shifts} onTriggerShiftFlash={() => {}} />}
               {currentPage === 'reports' && <Reports orders={orders} staff={staff} workSessions={sessions} />}
