@@ -1,47 +1,48 @@
 <?php
 /**
- * API для МебельПлан ERP (TimeWeb Cloud PostgreSQL)
- * Этот файл должен быть загружен на ваш хостинг.
+ * ФИНАЛЬНЫЙ API ДЛЯ МЕБЕЛЬПЛАН ERP
+ * СУБД: PostgreSQL (TimeWeb Cloud)
  */
 
+// 1. Настройки CORS и заголовки
 header('Content-Type: application/json; charset=utf-8');
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
 header('Access-Control-Allow-Headers: Content-Type, Authorization');
 
-// --- 1. ВАШИ ДАННЫЕ ПОДКЛЮЧЕНИЯ ---
-$host = '9f0f9288b234fa7e684a9441.twc1.net'; 
-$port = '5432';
-$dbname = 'default_db';
-$user = 'gen_user';
-$pass = 'I;L6fAhV|SjsWE';
-
-// Секретный токен для защиты (введите его в Настройках приложения)
-$api_token = "MebelPlan_2025_Secure"; 
+// 2. Данные подключения из вашего запроса
+$db_config = [
+    'host'     => '9f0f9288b234fa7e684a9441.twc1.net',
+    'port'     => '5432',
+    'dbname'   => 'default_db',
+    'user'     => 'gen_user',
+    'pass'     => 'I;L6fAhV|SjsWE',
+    'ssl_cert' => 'https://st.timeweb.com/cloud-static/ca.crt',
+    'token'    => 'MebelPlan_2025_Secure' // Этот токен должен быть в настройках приложения
+];
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') exit;
 
-// Автоматическая загрузка SSL-сертификата TimeWeb
-$cert_path = __DIR__ . '/root.crt';
-if (!file_exists($cert_path)) {
-    // Если сертификата нет, скачиваем его программно
-    $cert_data = @file_get_contents('https://st.timeweb.com/cloud-static/ca.crt');
-    if ($cert_data) {
-        file_put_contents($cert_path, $cert_data);
+// 3. Работа с SSL сертификатом
+$cert_file = __DIR__ . '/root.crt';
+if (!file_exists($cert_file)) {
+    $cert_content = @file_get_contents($db_config['ssl_cert']);
+    if ($cert_content) {
+        file_put_contents($cert_file, $cert_content);
     }
 }
 
+// 4. Подключение к базе данных
 try {
-    // Формируем DSN с обязательным SSL (verify-full как в psql)
-    $dsn = "pgsql:host=$host;port=$port;dbname=$dbname;sslmode=verify-full;sslrootcert=$cert_path";
+    $dsn = "pgsql:host={$db_config['host']};port={$db_config['port']};dbname={$db_config['dbname']};sslmode=verify-full;sslrootcert={$cert_file}";
     
-    $pdo = new PDO($dsn, $user, $pass, [
+    $pdo = new PDO($dsn, $db_config['user'], $db_config['pass'], [
         PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-        PDO::ATTR_TIMEOUT => 5 // Таймаут 5 секунд
+        PDO::ATTR_TIMEOUT => 10
     ]);
 
-    // Создаем таблицу для хранения данных (одна строка с id=1 хранит всё состояние)
+    // Инициализация таблицы
     $pdo->exec("CREATE TABLE IF NOT EXISTS woodplan_data (
         id INT PRIMARY KEY,
         content TEXT NOT NULL,
@@ -50,33 +51,29 @@ try {
 
 } catch (PDOException $e) {
     http_response_code(500);
-    echo json_encode([
-        'success' => false, 
-        'message' => 'Ошибка подключения к PostgreSQL: ' . $e->getMessage(),
-        'hint' => 'Проверьте, разрешены ли внешние подключения в панели TimeWeb.'
-    ]);
+    echo json_encode(['success' => false, 'message' => 'Ошибка БД: ' . $e->getMessage()]);
     exit;
 }
 
-// Проверка Bearer токена
+// 5. Проверка авторизации
 $headers = getallheaders();
-$auth_header = $headers['Authorization'] ?? $headers['authorization'] ?? '';
-if ($auth_header !== "Bearer $api_token") {
+$auth = $headers['Authorization'] ?? $headers['authorization'] ?? '';
+if ($auth !== "Bearer " . $db_config['token']) {
     http_response_code(403);
     echo json_encode(['success' => false, 'message' => 'Ошибка авторизации: неверный токен API.']);
     exit;
 }
 
+// 6. Обработка запросов
 $action = $_GET['action'] ?? '';
 
-// --- ЛОГИКА ОБРАБОТКИ ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $input = json_decode(file_get_contents('php://input'), true);
     
     if (isset($input['action']) && $input['action'] === 'save') {
         $payload = json_encode($input['payload'], JSON_UNESCAPED_UNICODE);
         
-        // UPSERT: вставляем или обновляем если id=1 уже есть
+        // UPSERT (INSERT or UPDATE)
         $stmt = $pdo->prepare("
             INSERT INTO woodplan_data (id, content) 
             VALUES (1, :content) 
@@ -87,10 +84,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($stmt->execute(['content' => $payload])) {
             echo json_encode(['success' => true]);
         } else {
-            echo json_encode(['success' => false, 'message' => 'Ошибка сохранения в базу данных.']);
+            echo json_encode(['success' => false, 'message' => 'Ошибка при сохранении данных']);
         }
     }
 } else {
+    // GET запросы
     if ($action === 'load') {
         $stmt = $pdo->query("SELECT content FROM woodplan_data WHERE id = 1");
         $row = $stmt->fetch();
@@ -98,15 +96,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($row) {
             echo json_encode(['success' => true, 'payload' => json_decode($row['content'], true)]);
         } else {
-            // Если база пуста, возвращаем начальную структуру
-            echo json_encode(['success' => true, 'payload' => ['orders' => [], 'staff' => [], 'sessions' => [], 'shifts' => []]]);
+            // Начальное состояние если данных нет
+            echo json_encode(['success' => true, 'payload' => [
+                'orders' => [], 
+                'staff' => [], 
+                'sessions' => [], 
+                'shifts' => []
+            ]]);
         }
     } elseif ($action === 'test') {
         echo json_encode([
             'success' => true, 
-            'message' => 'Связь с PostgreSQL TimeWeb установлена!',
-            'db_name' => $dbname,
-            'ssl' => file_exists($cert_path) ? 'Active' : 'Missing Cert'
+            'message' => 'Соединение с PostgreSQL TimeWeb Cloud активно!',
+            'details' => [
+                'db' => $db_config['dbname'],
+                'ssl' => file_exists($cert_file) ? 'Verified' : 'Error loading cert',
+                'server_time' => date('Y-m-d H:i:s')
+            ]
         ]);
+    } else {
+        echo json_encode(['success' => false, 'message' => 'Неизвестное действие']);
     }
 }

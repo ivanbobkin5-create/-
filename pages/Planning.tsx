@@ -13,7 +13,7 @@ type GroupingMode = 'stage' | 'deal';
 
 interface PlanningProps {
   orders: Order[];
-  onAddOrder: (order: Order) => void;
+  onAddOrder?: (order: Order) => void; // Сделано необязательным
   onSyncBitrix: () => Promise<number>;
   onUpdateTaskPlanning: (orderId: string, taskId: string, date: string | undefined, userId: string | undefined, accompliceIds?: string[]) => void;
   onUpdateTaskRate?: (orderId: string, taskId: string, rate: number) => void;
@@ -24,7 +24,7 @@ interface PlanningProps {
   onDeleteTask?: (orderId: string, taskId: string) => void;
 }
 
-const Planning: React.FC<PlanningProps> = ({ orders, onSyncBitrix, onUpdateTaskPlanning, onUpdateTaskRate, isBitrixEnabled, bitrixConfig, staff, shifts = {}, onDeleteTask }) => {
+const Planning: React.FC<PlanningProps> = ({ orders, onAddOrder, onSyncBitrix, onUpdateTaskPlanning, onUpdateTaskRate, isBitrixEnabled, bitrixConfig, staff, shifts = {}, onDeleteTask }) => {
   const [isSyncing, setIsSyncing] = useState(false);
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedTaskId, setSelectedTaskId] = useState<{orderId: string, taskId: string} | null>(null);
