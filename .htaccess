@@ -1,0 +1,14 @@
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+  
+  # Если запрашиваемый файл api.php существует, не перенаправлять его
+  RewriteCond %{REQUEST_FILENAME} -f
+  RewriteRule ^api\.php$ - [L]
+
+  # Остальные правила для SPA (React/Vite)
+  RewriteRule ^index\.html$ - [L]
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteRule . /index.html [L]
+</IfModule>

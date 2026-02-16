@@ -18,25 +18,28 @@ export const dbService = {
       });
       
       const text = await response.text();
+      const trimmed = text.trim();
       
+      // КРИТИЧЕСКАЯ ПРОВЕРКА: Если сервер выдал HTML
+      if (trimmed.toLowerCase().startsWith('<!doctype') || trimmed.includes('<html')) {
+        console.error('SERVER REDIRECT ERROR: Received HTML instead of JSON.');
+        console.log('Response content preview:', trimmed.slice(0, 500));
+        
+        return { 
+          success: false, 
+          message: `Ошибка: Файл api.php не найден или сервер перенаправляет запрос на главную. Убедитесь, что в URL указано /api.php в конце.` 
+        };
+      }
+
       if (response.status === 403) {
-        return { success: false, message: `403 Forbidden: Ошибка авторизации. Проверьте токен.` };
+        return { success: false, message: '403: Ошибка токена. Проверьте "MebelPlan_2025_Secure"' };
       }
 
       let data;
       try {
-        data = JSON.parse(text);
+        data = JSON.parse(trimmed);
       } catch (e) {
-        // Это КРИТИЧЕСКИЙ момент для отладки
-        console.group('ОШИБКА API (Non-JSON response)');
-        console.error('Статус:', response.status);
-        console.error('Полученный текст:', text);
-        console.groupEnd();
-        
-        return { 
-          success: false, 
-          message: `Сервер вернул текст вместо JSON. Нажмите F12 и проверьте вкладку Console.` 
-        };
+        return { success: false, message: `Ошибка парсинга JSON (Статус ${response.status})` };
       }
 
       if (!response.ok) {
@@ -45,14 +48,7 @@ export const dbService = {
       
       return { success: data.success, message: data.message || 'Связь установлена' };
     } catch (err: any) {
-      console.error('Connection Test Failed:', err);
-      if (err.name === 'TypeError' || err.message.includes('fetch')) {
-        return { 
-          success: false, 
-          message: 'Ошибка сети (Failed to fetch). Проверьте: 1. Доступность URL. 2. Наличие https. 3. Настройки CORS на хостинге.' 
-        };
-      }
-      return { success: false, message: err.message || 'Сетевая ошибка' };
+      return { success: false, message: 'Сетевая ошибка или CORS. Проверьте https://' };
     }
   },
 
@@ -65,19 +61,11 @@ export const dbService = {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${config.apiToken}`
         },
-        body: JSON.stringify({
-          action: 'save',
-          payload: data
-        })
+        body: JSON.stringify({ action: 'save', payload: data })
       });
-      if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(`Ошибка сервера: ${errText.slice(0, 50)}`);
-      }
-      return await response.json();
-    } catch (err: any) {
-      console.error('Cloud Save Error:', err);
-      return { success: false, message: err.message };
+      return response.ok ? await response.json() : { success: false };
+    } catch (err) {
+      return { success: false };
     }
   },
 
@@ -85,17 +73,12 @@ export const dbService = {
     if (!config.enabled || !config.apiUrl) return null;
     try {
       const response = await fetch(`${config.apiUrl}?action=load`, {
-        headers: { 
-          'Authorization': `Bearer ${config.apiToken}`,
-          'Accept': 'application/json',
-          'Cache-Control': 'no-cache'
-        }
+        headers: { 'Authorization': `Bearer ${config.apiToken}`, 'Accept': 'application/json' }
       });
       if (!response.ok) return null;
       const result = await response.json();
       return result.payload;
     } catch (err) {
-      console.error('Cloud Load Error:', err);
       return null;
     }
   }
