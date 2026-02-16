@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   User, 
   UserRole, 
@@ -8,8 +8,6 @@ import {
   TaskStatus, 
   BitrixConfig,
   Task,
-  Detail,
-  Package,
   WorkSession
 } from './types';
 import Sidebar from './components/Sidebar';
@@ -70,18 +68,16 @@ const App: React.FC = () => {
   
   const [currentPage, setCurrentPage] = useState('dashboard');
   const [isSyncing, setIsSyncing] = useState(false);
-  const [dbStatus, setDbStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [dbStatus, setDbStatus] = useState<'loading' | 'ready'>('loading');
 
   const showToast = (msg: string, type: 'success' | 'error' = 'success') => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3000);
   };
 
-  // Метод сохранения данных в облако
   const syncWithCloud = useCallback(async (forcedData?: any) => {
     const cloudCfg = bitrixConfig.cloud || INITIAL_BITRIX_CONFIG.cloud!;
     const dataToSave = forcedData || { orders, staff, sessions, shifts };
-    
     setIsSyncing(true);
     try {
       await dbService.saveToCloud(cloudCfg, dataToSave);
@@ -91,11 +87,10 @@ const App: React.FC = () => {
     setIsSyncing(false);
   }, [orders, staff, sessions, shifts, bitrixConfig.cloud]);
 
-  // Загрузка данных при старте
+  // Загрузка данных при входе/старте
   const initData = useCallback(async () => {
     setDbStatus('loading');
     const cloudCfg = bitrixConfig.cloud || INITIAL_BITRIX_CONFIG.cloud!;
-    
     try {
       const cloudData = await dbService.loadFromCloud(cloudCfg);
       if (cloudData) {
@@ -103,28 +98,17 @@ const App: React.FC = () => {
         setStaff(cloudData.staff || []);
         setSessions(cloudData.sessions || []);
         setShifts(cloudData.shifts || {});
-        console.log("Данные успешно подтянуты из PostgreSQL TimeWeb");
-      } else {
-        console.log("База данных в облаке пуста (первый запуск)");
       }
       setDbStatus('ready');
     } catch (e) {
-      console.error("Ошибка при загрузке из облака", e);
-      setDbStatus('error');
+      setDbStatus('ready'); // Все равно пускаем к логину
     }
   }, [bitrixConfig.cloud]);
 
   useEffect(() => {
-    initData();
-  }, [initData]);
-
-  // Авто-синхронизация каждые 30 секунд, если пользователь залогинен
-  useEffect(() => {
-    if (dbStatus === 'ready' && user) {
-      const interval = setInterval(() => { syncWithCloud(); }, 30000);
-      return () => clearInterval(interval);
-    }
-  }, [user, dbStatus, syncWithCloud]);
+    if (user) initData();
+    else setDbStatus('ready');
+  }, [user, initData]);
 
   const updateTaskStatus = useCallback((orderId: string, taskId: string, status: TaskStatus | 'RESUME', comment?: string) => {
     setOrders(prev => prev.map(o => {
@@ -147,26 +131,13 @@ const App: React.FC = () => {
 
   if (dbStatus === 'loading') {
     return (
-      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center space-y-6 text-center">
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center space-y-6">
         <Loader2 size={48} className="text-blue-500 animate-spin" />
-        <div className="space-y-2">
+        <div className="text-center">
           <h2 className="text-white font-black uppercase text-sm tracking-widest">МебельПлан</h2>
-          <p className="text-slate-500 text-[10px] uppercase tracking-[0.3em] flex items-center justify-center gap-2">
-            <Database size={12}/> Подключение к базе TimeWeb Cloud...
+          <p className="text-slate-500 text-[10px] mt-2 uppercase tracking-[0.3em] flex items-center justify-center gap-2">
+            <Database size={12}/> Синхронизация...
           </p>
-        </div>
-      </div>
-    );
-  }
-
-  if (dbStatus === 'error') {
-    return (
-      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center space-y-6 text-center p-10">
-        <AlertCircle size={48} className="text-rose-500" />
-        <div className="space-y-4">
-          <h2 className="text-white font-bold text-xl uppercase tracking-widest">Ошибка связи с БД</h2>
-          <p className="text-slate-500 text-sm max-w-md mx-auto">Не удалось установить соединение с сервером базы данных PostgreSQL на TimeWeb. Проверьте статус сервера в панели управления.</p>
-          <button onClick={() => window.location.reload()} className="px-6 py-3 bg-blue-600 text-white rounded-xl font-bold uppercase text-xs">Повторить попытку</button>
         </div>
       </div>
     );
@@ -174,30 +145,37 @@ const App: React.FC = () => {
 
   if (!user) {
     return <LoginPage 
-      onLogin={(role, email, pass) => {
-        const found = staff.find(s => s.email?.toLowerCase() === email?.toLowerCase());
-        if (found) {
-          if (found.password === pass) {
-            setUser(found); 
-            localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(found)); 
-          } else {
-            return "Неверный пароль.";
+      onLogin={async (role, email, pass) => {
+        if (!email || !pass) return "Введите e-mail и пароль";
+        
+        const result = await dbService.login(email, pass);
+        
+        if (result.success && result.user) {
+          // Если логин успешен, сразу ставим все данные из ответа сервера
+          const data = result.payload;
+          if (data) {
+            setOrders(data.orders || []);
+            setStaff(data.staff || []);
+            setSessions(data.sessions || []);
+            setShifts(data.shifts || {});
           }
+          setUser(result.user);
+          localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(result.user));
+          return;
         } else {
-          return "Пользователь с таким e-mail не найден в базе вашей компании.";
+          return result.message || "Ошибка входа";
         }
       }} 
-      onRegister={(name, email, pass) => {
+      onRegister={async (name, email, pass) => {
         const u: User = { 
           id: 'U-' + Math.random().toString(36).substr(2, 9), 
           email, password: pass, name: 'Администратор', role: UserRole.COMPANY_ADMIN, companyName: name, isProduction: false 
         };
-        const updatedStaff = [...staff, u];
+        const updatedStaff = [u];
         setStaff(updatedStaff); 
         setUser(u); 
         localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(u));
-        // Принудительно сохраняем в облако ПРЯМО СЕЙЧАС
-        syncWithCloud({ orders: [], staff: updatedStaff, sessions: [], shifts: {} });
+        await dbService.saveToCloud(bitrixConfig.cloud!, { orders: [], staff: updatedStaff, sessions: [], shifts: {} });
       }} 
     />;
   }
@@ -209,7 +187,7 @@ const App: React.FC = () => {
         <header className="h-16 bg-white border-b border-slate-200 px-8 flex items-center justify-between shadow-sm z-30">
           <h1 className="text-xl font-bold uppercase text-slate-800 tracking-tight">{NAVIGATION_ITEMS.find(i => i.id === currentPage)?.label}</h1>
           <div className="flex items-center gap-6">
-            {isSyncing && <div className="text-[9px] font-black text-blue-500 animate-pulse uppercase flex items-center gap-1"><Database size={10}/> Обмен с TimeWeb Cloud...</div>}
+            {isSyncing && <div className="text-[9px] font-black text-blue-500 animate-pulse uppercase flex items-center gap-1"><Database size={10}/> Синхронизация...</div>}
             <div className="flex items-center gap-3">
               <div className="text-right"><div className="text-sm font-semibold">{user.name}</div><div className="text-[10px] text-slate-400 font-bold uppercase">{user.role}</div></div>
               <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center font-bold text-blue-600 border-2 border-white">{user.name.charAt(0)}</div>

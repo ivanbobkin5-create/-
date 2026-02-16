@@ -1,11 +1,11 @@
 
 import React, { useState } from 'react';
 import { UserRole } from '../types';
-import { Layout, Shield, Factory, Lock, User as UserIcon, ArrowLeft } from 'lucide-react';
+import { Layout, Shield, Factory, Lock, User as UserIcon, ArrowLeft, Loader2 } from 'lucide-react';
 
 interface LoginPageProps {
-  onLogin: (role: UserRole, email?: string, password?: string) => string | void;
-  onRegister: (companyName: string, email: string, pass: string) => string | void;
+  onLogin: (role: UserRole, email?: string, password?: string) => Promise<string | void>;
+  onRegister: (companyName: string, email: string, pass: string) => Promise<string | void>;
 }
 
 const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onRegister }) => {
@@ -16,36 +16,42 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onRegister }) => {
   const [adminLogin, setAdminLogin] = useState('');
   const [adminPass, setAdminPass] = useState('');
   const [error, setError] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
 
-  const handleAdminAuth = (e: React.FormEvent) => {
+  const handleAdminAuth = async (e: React.FormEvent) => {
     e.preventDefault();
+    setIsLoading(true);
     if (adminLogin === 'ivanbobkin' && adminPass === 'Joe240193') {
-      onLogin(UserRole.SITE_ADMIN);
+      await onLogin(UserRole.SITE_ADMIN);
     } else {
       setError('Неверный логин или пароль администратора');
       setTimeout(() => setError(''), 3000);
     }
+    setIsLoading(false);
   };
 
-  const handleAuth = (e: React.FormEvent) => {
+  const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setIsLoading(true);
 
-    if (view === 'register') {
-      if (!companyName || !email || !password) {
-        setError('Заполните все поля регистрации');
+    try {
+      if (view === 'register') {
+        if (!companyName || !email || !password) {
+          setError('Заполните все поля регистрации');
+          return;
+        }
+        const result = await onRegister(companyName, email, password);
+        if (typeof result === 'string') setError(result);
         return;
       }
-      const result = onRegister(companyName, email, password);
-      if (typeof result === 'string') {
-        setError(result);
-      }
-      return;
-    }
 
-    const result = onLogin(UserRole.EMPLOYEE, email, password);
-    if (typeof result === 'string') {
-      setError(result);
+      const result = await onLogin(UserRole.EMPLOYEE, email, password);
+      if (typeof result === 'string') setError(result);
+    } catch (e) {
+      setError("Ошибка соединения с сервером");
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -81,6 +87,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onRegister }) => {
                     <UserIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
                     <input 
                       type="text" 
+                      disabled={isLoading}
                       value={adminLogin}
                       onChange={e => setAdminLogin(e.target.value)}
                       placeholder="" 
@@ -94,6 +101,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onRegister }) => {
                     <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
                     <input 
                       type="password" 
+                      disabled={isLoading}
                       value={adminPass}
                       onChange={e => setAdminPass(e.target.value)}
                       placeholder="" 
@@ -102,7 +110,8 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onRegister }) => {
                   </div>
                 </div>
                 {error && <p className="text-rose-600 text-[10px] font-bold text-center animate-pulse">{error}</p>}
-                <button className="w-full bg-slate-900 text-white py-3 rounded-xl font-bold shadow-lg hover:bg-black transition-all">
+                <button disabled={isLoading} className="w-full bg-slate-900 text-white py-3 rounded-xl font-bold shadow-lg hover:bg-black transition-all flex items-center justify-center gap-2">
+                  {isLoading && <Loader2 size={16} className="animate-spin" />}
                   Авторизоваться
                 </button>
               </form>
@@ -132,6 +141,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onRegister }) => {
                       <Factory className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
                       <input 
                         type="text" 
+                        disabled={isLoading}
                         value={companyName}
                         onChange={e => setCompanyName(e.target.value)}
                         placeholder='ООО "Мебель Фактура"' 
@@ -146,6 +156,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onRegister }) => {
                     <Shield className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
                     <input 
                       type="email" 
+                      disabled={isLoading}
                       value={email}
                       onChange={e => setEmail(e.target.value)}
                       placeholder={view === 'register' ? 'admin@mebel-faktura.ru' : 'name@mebel-faktura.ru'} 
@@ -159,6 +170,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onRegister }) => {
                     <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
                     <input 
                       type="password" 
+                      disabled={isLoading}
                       value={password}
                       onChange={e => setPassword(e.target.value)}
                       placeholder="••••••••" 
@@ -169,7 +181,8 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onRegister }) => {
                 
                 {error && <p className="text-rose-600 text-[10px] font-bold text-center bg-rose-50 p-2 rounded-lg border border-rose-100">{error}</p>}
 
-                <button className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold shadow-lg shadow-blue-500/30 hover:bg-blue-700 hover:-translate-y-0.5 transition-all">
+                <button disabled={isLoading} className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold shadow-lg shadow-blue-500/30 hover:bg-blue-700 hover:-translate-y-0.5 transition-all flex items-center justify-center gap-2">
+                  {isLoading && <Loader2 size={16} className="animate-spin" />}
                   {view === 'login' ? 'Войти в систему' : 'Создать аккаунт'}
                 </button>
               </form>

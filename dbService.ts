@@ -2,19 +2,16 @@
 import { Order, User, WorkSession, CloudConfig } from './types';
 
 export const dbService = {
-  async testConnection(config: CloudConfig): Promise<{ success: boolean; message: string }> {
+  async login(email: string, pass: string): Promise<{ success: boolean; user?: User; payload?: any; message?: string }> {
     try {
-      const response = await fetch('/api/test', {
-        method: 'GET',
-        headers: { 
-          'Authorization': `Bearer ${config.apiToken}`,
-          'Accept': 'application/json'
-        }
+      const response = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password: pass })
       });
-      const data = await response.json();
-      return { success: data.success, message: data.message || 'Связь установлена' };
-    } catch (err: any) {
-      return { success: false, message: 'Не удалось достучаться до сервера /api/test' };
+      return await response.json();
+    } catch (err) {
+      return { success: false, message: "Сервер недоступен" };
     }
   },
 
@@ -38,7 +35,6 @@ export const dbService = {
   },
 
   async loadFromCloud(config: CloudConfig) {
-    // Мы всегда пытаемся загрузить данные, если есть токен
     try {
       const response = await fetch('/api/load', {
         method: 'GET',
@@ -49,10 +45,32 @@ export const dbService = {
       });
       if (!response.ok) return null;
       const result = await response.json();
-      return result.payload; // Может быть null, если таблица пуста
+      return result.payload;
     } catch (err) {
-      console.error("Cloud load failed", err);
       return null;
+    }
+  },
+
+  // Fix: Added missing testConnection method used in SiteAdmin.tsx
+  async testConnection(config: CloudConfig): Promise<{ success: boolean; message: string }> {
+    try {
+      const response = await fetch('/api/load', {
+        method: 'GET',
+        headers: { 
+            'Authorization': `Bearer ${config.apiToken}`, 
+            'Accept': 'application/json' 
+        }
+      });
+      
+      if (response.ok) {
+        return { success: true, message: "Соединение установлено успешно" };
+      } else if (response.status === 403) {
+        return { success: false, message: "Ошибка авторизации: неверный токен" };
+      } else {
+        return { success: false, message: `Ошибка сервера: ${response.status}` };
+      }
+    } catch (err) {
+      return { success: false, message: "Сервер облака недоступен" };
     }
   }
 };
