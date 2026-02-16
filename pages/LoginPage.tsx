@@ -5,7 +5,7 @@ import { Layout, Shield, Factory, Lock, User as UserIcon, ArrowLeft } from 'luci
 
 interface LoginPageProps {
   onLogin: (role: UserRole, email?: string, password?: string) => string | void;
-  onRegister: (companyName: string, email: string, pass: string) => void;
+  onRegister: (companyName: string, email: string, pass: string) => string | void;
 }
 
 const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onRegister }) => {
@@ -36,11 +36,13 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onRegister }) => {
         setError('Заполните все поля регистрации');
         return;
       }
-      onRegister(companyName, email, password);
+      const result = onRegister(companyName, email, password);
+      if (typeof result === 'string') {
+        setError(result);
+      }
       return;
     }
 
-    // Логика входа (и для админа компании, и для сотрудников)
     const result = onLogin(UserRole.EMPLOYEE, email, password);
     if (typeof result === 'string') {
       setError(result);

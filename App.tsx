@@ -52,7 +52,7 @@ const INITIAL_BITRIX_CONFIG: BitrixConfig = {
   cloud: { 
     enabled: false, 
     apiUrl: '', 
-    apiToken: 'MebelPlan_2025_Secure' // Токен по умолчанию совпадает с api.php
+    apiToken: 'MebelPlan_2025_Secure'
   }
 };
 
@@ -258,6 +258,26 @@ const App: React.FC = () => {
     }
   };
 
+  const handleRegister = (companyName: string, email: string, pass: string) => {
+    if (staff.some(s => s.email.toLowerCase() === email.toLowerCase())) {
+      return "Пользователь с таким email уже существует";
+    }
+    
+    const newUser: User = {
+      id: 'U-' + Math.random().toString(36).substr(2, 9),
+      email: email,
+      password: pass,
+      name: 'Администратор',
+      role: UserRole.COMPANY_ADMIN,
+      companyName: companyName,
+      isProduction: false,
+      source: 'MANUAL'
+    };
+
+    setStaff(prev => [...prev, newUser]);
+    setUser(newUser);
+  };
+
   if (!user) return <LoginPage onLogin={(role, email, pass) => {
     if (role === UserRole.SITE_ADMIN) {
       setUser({ id: 'sa', name: 'Администратор', email: 'admin@system.ru', role: UserRole.SITE_ADMIN });
@@ -269,7 +289,23 @@ const App: React.FC = () => {
     } else {
       return "Неверный логин или пароль";
     }
-  }} onRegister={() => {}} />;
+  }} onRegister={handleRegister} />;
+
+  // Глобальный вид для Администратора Сайта (Core)
+  if (user.role === UserRole.SITE_ADMIN) {
+    return (
+      <SiteAdmin 
+        onLogout={() => setUser(null)}
+        orders={orders}
+        staff={staff}
+        companies={[{ id: 'main', name: 'Система МебельПлан' }]}
+        config={bitrixConfig}
+        onUpdateUser={updateStaffMember}
+        onSendMessage={(to, text) => alert(`Отправлено ${to}: ${text}`)}
+        onUpdateConfig={setBitrixConfig}
+      />
+    );
+  }
 
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden text-slate-900">
