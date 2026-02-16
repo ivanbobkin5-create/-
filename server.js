@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 import pg from 'pg';
 import cors from 'cors';
 
+const { Pool } = pg;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -13,28 +14,46 @@ const PORT = process.env.PORT || 3000;
 
 const SECURE_TOKEN = 'MebelPlan_2025_Secure';
 
-// Собираем строку подключения из ваших данных
-// Если в Timeweb Apps вы добавите переменную DATABASE_URL, сервер возьмет её
+// Тщательная настройка SSL для Timeweb Cloud
+const getSslConfig = () => {
+    // Если пользователь передал содержимое сертификата через ENV (самый надежный способ в Apps)
+    if (process.env.DB_CA_CERT) {
+        console.log('📜 Используется предоставленный SSL CA сертификат');
+        return {
+            rejectUnauthorized: true,
+            ca: process.env.DB_CA_CERT,
+        };
+    }
+    // По умолчанию используем мягкий режим, если сертификат не задан
+    return {
+        rejectUnauthorized: false
+    };
+};
+
+// Собираем строку подключения
+// Символы в пароле I;L6fAhV|SjsWE уже экранированы в строке ниже как I%3BL6fAhV%7CSjsWE
 const connectionString = process.env.DATABASE_URL || 'postgresql://gen_user:I%3BL6fAhV%7CSjsWE@9f0f9288b234fa7e684a9441.twc1.net:5432/default_db';
 
-const pool = new pg.Pool({
+const pool = new Pool({
     connectionString,
-    ssl: {
-        rejectUnauthorized: false // Обход проверки сертификата для Timeweb
-    },
-    connectionTimeoutMillis: 10000,
+    ssl: getSslConfig(),
+    connectionTimeoutMillis: 15000, // Увеличим тайм-аут для облачных баз
 });
 
 pool.on('error', (err) => {
-    console.error('❌ Ошибка пула БД:', err.message);
+    console.error('❌ Неожиданная ошибка пула БД:', err.message);
 });
 
-// Функция создания таблиц с повторными попытками
+// Инициализация БД
 const initDatabase = async (retries = 5) => {
+    console.log('🔄 Попытка инициализации базы данных...');
     while (retries > 0) {
+        let client;
         try {
-            const client = await pool.connect();
-            console.log('✅ Успешное подключение к PostgreSQL');
+            client = await pool.connect();
+            console.log('✅ Соединение с PostgreSQL установлено успешно!');
+            
+            // Проверяем/создаем таблицу
             await client.query(`
                 CREATE TABLE IF NOT EXISTS woodplan_data (
                     id INT PRIMARY KEY, 
@@ -42,14 +61,25 @@ const initDatabase = async (retries = 5) => {
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             `);
-            client.release();
-            console.log('✅ Таблица woodplan_data проверена/создана');
+            console.log('✅ Структура таблиц подтверждена.');
+            
+            // Проверка наличия данных
+            const res = await client.query('SELECT COUNT(*) FROM woodplan_data');
+            console.log(`📊 Текущее количество записей в базе: ${res.rows[0].count}`);
+            
             return true;
         } catch (err) {
             retries--;
-            console.error(`❌ Ошибка БД (осталось попыток: ${retries}):`, err.message);
-            if (retries === 0) return false;
-            await new Promise(res => setTimeout(res, 5000)); // Ждем 5 сек перед повтором
+            console.error(`❌ Ошибка подключения (${retries} попыток осталось):`, err.message);
+            if (err.code) console.error(`🔍 Код ошибки: ${err.code}`);
+            
+            if (retries === 0) {
+                console.error('🛑 Все попытки подключения исчерпаны. Проверьте HOST, PORT и SSL в панели Timeweb.');
+                return false;
+            }
+            await new Promise(res => setTimeout(res, 5000));
+        } finally {
+            if (client) client.release();
         }
     }
 };
@@ -60,17 +90,19 @@ app.use(express.static(path.join(__dirname, 'build')));
 
 app.get('/api/health', async (req, res) => {
     try {
-        const result = await pool.query('SELECT NOW() as time');
+        const result = await pool.query('SELECT NOW() as time, current_database() as db');
         res.json({ 
             status: 'ok', 
             database: 'connected', 
+            dbName: result.rows[0].db,
             time: result.rows[0].time 
         });
     } catch (err) {
-        console.error('Health check failed:', err.message);
+        console.error('API Health Error:', err.message);
         res.status(500).json({ 
             status: 'error', 
-            database: err.message 
+            database: err.message,
+            hint: 'Убедитесь, что IP сервера добавлен в белый список БД или SSL настроен верно.'
         });
     }
 });
@@ -80,23 +112,27 @@ app.post('/api/login', async (req, res) => {
     try {
         const result = await pool.query('SELECT content FROM woodplan_data WHERE id = 1');
         if (result.rows.length === 0) {
-            return res.status(404).json({ success: false, message: "База пуста. Создайте аккаунт через Регистрацию." });
+            return res.status(404).json({ 
+                success: false, 
+                message: "База данных пуста. Пожалуйста, используйте 'Регистрацию' для создания первой учетной записи." 
+            });
         }
         const data = JSON.parse(result.rows[0].content);
         const user = (data.staff || []).find(u => u.email?.toLowerCase() === email?.toLowerCase());
         
         if (!user || user.password !== password) {
-            return res.status(401).json({ success: false, message: "Неверный логин или пароль." });
+            return res.status(401).json({ success: false, message: "Неверный e-mail или пароль." });
         }
         res.json({ success: true, user, payload: data });
     } catch (err) {
-        res.status(500).json({ success: false, message: err.message });
+        console.error('API Login Error:', err.message);
+        res.status(500).json({ success: false, message: "Ошибка сервера БД: " + err.message });
     }
 });
 
 app.post('/api/save', async (req, res) => {
     const { payload, token } = req.body;
-    if (token !== SECURE_TOKEN) return res.status(403).json({ success: false });
+    if (token !== SECURE_TOKEN) return res.status(403).json({ success: false, message: "Invalid security token" });
     try {
         await pool.query(
             'INSERT INTO woodplan_data (id, content) VALUES (1, $1) ON CONFLICT (id) DO UPDATE SET content = EXCLUDED.content, updated_at = CURRENT_TIMESTAMP',
@@ -104,6 +140,7 @@ app.post('/api/save', async (req, res) => {
         );
         res.json({ success: true });
     } catch (err) {
+        console.error('API Save Error:', err.message);
         res.status(500).json({ success: false, message: err.message });
     }
 });
@@ -115,6 +152,7 @@ app.get('/api/load', async (req, res) => {
         const result = await pool.query('SELECT content FROM woodplan_data WHERE id = 1');
         res.json({ success: true, payload: result.rows[0] ? JSON.parse(result.rows[0].content) : null });
     } catch (err) {
+        console.error('API Load Error:', err.message);
         res.status(500).json({ success: false, message: err.message });
     }
 });
@@ -124,6 +162,6 @@ app.get('*', (req, res) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Сервер МебельПлан на порту ${PORT}`);
+    console.log(`🚀 Сервер МебельПлан запущен на порту ${PORT}`);
     initDatabase();
 });
