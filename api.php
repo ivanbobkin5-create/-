@@ -1,10 +1,18 @@
 <?php
 /**
- * API ДЛЯ МЕБЕЛЬПЛАН ERP
+ * СТАБИЛЬНЫЙ API ДЛЯ МЕБЕЛЬПЛАН ERP
  * Поддержка PostgreSQL (TimeWeb Cloud) + SSL verify-full
  */
 
-// 1. Принудительные заголовки CORS (всегда в самом начале)
+// Отключаем вывод любых ошибок PHP в поток вывода (чтобы не портить JSON)
+error_reporting(0);
+ini_set('display_errors', 0);
+
+// Очищаем буфер, если там что-то было
+if (ob_get_length()) ob_clean();
+ob_start();
+
+// 1. Заголовки CORS
 header("Access-Control-Allow-Origin: *");
 header("Access-Control-Allow-Methods: GET, POST, OPTIONS");
 header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With");
@@ -27,58 +35,41 @@ $db_config = [
     'token'    => 'MebelPlan_2025_Secure'
 ];
 
-// 3. Получение токена авторизации (улучшенный метод)
-function getAuthorizationHeader() {
-    $headers = null;
-    if (isset($_SERVER['Authorization'])) {
-        $headers = trim($_SERVER["Authorization"]);
-    } else if (isset($_SERVER['HTTP_AUTHORIZATION'])) {
-        $headers = trim($_SERVER["HTTP_AUTHORIZATION"]);
-    } else if (isset($_SERVER['REDIRECT_HTTP_AUTHORIZATION'])) {
-        $headers = trim($_SERVER["REDIRECT_HTTP_AUTHORIZATION"]);
-    } else if (function_exists('getallheaders')) {
-        $allHeaders = getallheaders();
-        if (isset($allHeaders['Authorization'])) {
-            $headers = trim($allHeaders['Authorization']);
-        } elseif (isset($allHeaders['authorization'])) {
-            $headers = trim($allHeaders['authorization']);
-        }
-    }
-    return $headers;
+// 3. Функция получения заголовков
+function getAuthHeader() {
+    $headers = array_change_key_case(getallheaders(), CASE_LOWER);
+    if (isset($headers['authorization'])) return trim($headers['authorization']);
+    if (isset($_SERVER['HTTP_AUTHORIZATION'])) return trim($_SERVER['HTTP_AUTHORIZATION']);
+    if (isset($_SERVER['REDIRECT_HTTP_AUTHORIZATION'])) return trim($_SERVER['REDIRECT_HTTP_AUTHORIZATION']);
+    return null;
 }
 
-$authHeader = getAuthorizationHeader();
-if (!$authHeader || $authHeader !== "Bearer " . $db_config['token']) {
+// 4. Проверка токена
+$auth = getAuthHeader();
+if ($auth !== "Bearer " . $db_config['token']) {
     http_response_code(403);
     echo json_encode([
         'success' => false, 
-        'message' => 'Доступ запрещен: неверный или отсутствует токен API.',
-        'debug' => [
-            'received' => $authHeader ? 'Token hidden' : 'No header',
-            'method' => $_SERVER['REQUEST_METHOD']
-        ]
+        'message' => 'Ошибка 403: Токен не совпадает или отсутствует.',
+        'received_debug' => $auth ? 'Present' : 'Absent'
     ]);
+    ob_end_flush();
     exit;
 }
 
-// 4. Подготовка SSL сертификата
+// 5. Подготовка SSL сертификата
 $cert_file = __DIR__ . '/root.crt';
 if (!file_exists($cert_file)) {
-    $cert_content = @file_get_contents($db_config['ssl_cert']);
+    // Используем альтернативный метод, если file_get_contents заблокирован
+    $ch = curl_init($db_config['ssl_cert']);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+    $cert_content = curl_exec($ch);
+    curl_close($ch);
+    
     if ($cert_content) {
         file_put_contents($cert_file, $cert_content);
-        chmod($cert_file, 0644);
     }
-}
-
-// 5. Функция подключения к БД
-function getDbConnection($config, $cert) {
-    $dsn = "pgsql:host={$config['host']};port={$config['port']};dbname={$config['dbname']};sslmode=verify-full;sslrootcert={$cert}";
-    return new PDO($dsn, $config['user'], $config['pass'], [
-        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-        PDO::ATTR_TIMEOUT => 5
-    ]);
 }
 
 // 6. Обработка действий
@@ -88,9 +79,12 @@ try {
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $input = json_decode(file_get_contents('php://input'), true);
         if (isset($input['action']) && $input['action'] === 'save') {
-            $pdo = getDbConnection($db_config, $cert_file);
+            $dsn = "pgsql:host={$db_config['host']};port={$db_config['port']};dbname={$db_config['dbname']};sslmode=verify-full;sslrootcert={$cert_file}";
+            $pdo = new PDO($dsn, $db_config['user'], $db_config['pass'], [
+                PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+                PDO::ATTR_TIMEOUT => 5
+            ]);
             
-            // Инициализация таблицы при необходимости
             $pdo->exec("CREATE TABLE IF NOT EXISTS woodplan_data (id INT PRIMARY KEY, content TEXT, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)");
             
             $payload = json_encode($input['payload'], JSON_UNESCAPED_UNICODE);
@@ -101,23 +95,23 @@ try {
         }
     } else {
         if ($action === 'test') {
-            // Тест связи пытается подключиться к БД
-            try {
-                $pdo = getDbConnection($db_config, $cert_file);
-                $stmt = $pdo->query("SELECT version()");
-                $version = $stmt->fetchColumn();
-                echo json_encode([
-                    'success' => true, 
-                    'message' => 'Соединение с БД активно (verify-full)!',
-                    'version' => $version
-                ]);
-            } catch (Exception $e) {
-                echo json_encode(['success' => false, 'message' => 'Ошибка БД: ' . $e->getMessage()]);
-            }
+            // Тестовое подключение
+            $dsn = "pgsql:host={$db_config['host']};port={$db_config['port']};dbname={$db_config['dbname']};sslmode=verify-full;sslrootcert={$cert_file}";
+            $pdo = new PDO($dsn, $db_config['user'], $db_config['pass'], [
+                PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+                PDO::ATTR_TIMEOUT => 3
+            ]);
+            $ver = $pdo->query("SELECT version()")->fetchColumn();
+            echo json_encode([
+                'success' => true, 
+                'message' => 'Связь с PostgreSQL TimeWeb Cloud (verify-full) установлена!',
+                'db_version' => $ver
+            ]);
         } elseif ($action === 'load') {
-            $pdo = getDbConnection($db_config, $cert_file);
+            $dsn = "pgsql:host={$db_config['host']};port={$db_config['port']};dbname={$db_config['dbname']};sslmode=verify-full;sslrootcert={$cert_file}";
+            $pdo = new PDO($dsn, $db_config['user'], $db_config['pass'], [PDO::ATTR_TIMEOUT => 5]);
             $stmt = $pdo->query("SELECT content FROM woodplan_data WHERE id = 1");
-            $row = $stmt->fetch();
+            $row = $stmt->fetch(PDO::FETCH_ASSOC);
             echo json_encode([
                 'success' => true, 
                 'payload' => $row ? json_decode($row['content'], true) : null
@@ -126,5 +120,7 @@ try {
     }
 } catch (Exception $e) {
     http_response_code(500);
-    echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+    echo json_encode(['success' => false, 'message' => 'Системная ошибка: ' . $e->getMessage()]);
 }
+
+ob_end_flush();

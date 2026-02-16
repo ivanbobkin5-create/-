@@ -5,7 +5,6 @@ export const dbService = {
   async testConnection(config: CloudConfig): Promise<{ success: boolean; message: string }> {
     if (!config.apiUrl) return { success: false, message: 'URL API не задан' };
     
-    // Очищаем URL от лишних пробелов
     const url = config.apiUrl.trim();
 
     try {
@@ -18,21 +17,21 @@ export const dbService = {
         }
       });
       
-      if (response.status === 403) {
-        return { success: false, message: '403: Ошибка авторизации. Проверьте токен API.' };
-      }
-
-      if (response.status === 404) {
-        return { success: false, message: '404: Файл api.php не найден по указанному адресу.' };
-      }
-
       const text = await response.text();
+      
+      if (response.status === 403) {
+        return { success: false, message: `403 Forbidden: Вероятно, токен API неверный. Получено: ${text.slice(0, 50)}...` };
+      }
+
       let data;
       try {
         data = JSON.parse(text);
       } catch (e) {
-        console.error('Raw response:', text);
-        return { success: false, message: `Ошибка: Сервер вернул не JSON. Проверьте api.php.` };
+        console.error('SERVER SENT NON-JSON:', text);
+        return { 
+          success: false, 
+          message: `Ошибка JSON: Сервер вернул текст вместо данных. Посмотрите консоль (F12) для деталей.` 
+        };
       }
 
       if (!response.ok) {
@@ -42,11 +41,10 @@ export const dbService = {
       return { success: data.success, message: data.message || 'Связь установлена' };
     } catch (err: any) {
       console.error('Connection Test Failed:', err);
-      // Если это Failed to fetch, даем более детальный совет
       if (err.message === 'Failed to fetch') {
         return { 
           success: false, 
-          message: 'Сетевая ошибка (Failed to fetch). Возможно: 1. Неверный URL. 2. Ошибка SSL. 3. CORS заблокирован сервером.' 
+          message: 'Сетевая ошибка (Failed to fetch). Убедитесь, что URL верный и SSL сертификат сайта исправен.' 
         };
       }
       return { success: false, message: err.message || 'Сетевая ошибка' };
@@ -68,8 +66,9 @@ export const dbService = {
         })
       });
       if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.message || 'Ошибка сохранения');
+        const errText = await response.text();
+        console.error('Cloud Save HTTP Error:', errText);
+        throw new Error(`Ошибка ${response.status}: ${errText.slice(0, 100)}`);
       }
       return await response.json();
     } catch (err: any) {
