@@ -5,7 +5,7 @@ import { STAGE_CONFIG, STAGE_SEQUENCE, getEmployeeColor } from '../constants';
 import { 
   Search, RefreshCw, Calendar as CalendarIcon, 
   ChevronLeft, ChevronRight, Inbox, User as UserIcon, 
-  X, Check, Plus, Factory, ChevronDown, Coins, UserPlus, AlertCircle
+  X, Check, Plus, Factory, ChevronDown, Coins, UserPlus, AlertCircle, Clock
 } from 'lucide-react';
 
 type GroupingMode = 'stage' | 'deal';
@@ -225,11 +225,20 @@ const Planning: React.FC<PlanningProps> = ({ orders, onAddOrder, onSyncBitrix, o
                           const isC = task.status === TaskStatus.COMPLETED; 
                           const ms = staff.find(s => s.id === task.assignedTo);
                           const accompliceList = (task.accompliceIds || []).map(id => staff.find(s => s.id === id)).filter(Boolean);
+                          const orderColor = getEmployeeColor(task.order.id); // Цвет на основе заказа
+                          const isOverdue = !isC && task.plannedDate && task.plannedDate < todayStr;
                           
                           return (
-                            <div key={task.id} className={`p-2.5 rounded-2xl border flex flex-col h-fit min-h-[140px] shadow-sm transition-all hover:shadow-md hover:border-blue-200 group/card ${isC ? 'bg-emerald-50 border-emerald-300' : 'bg-white border-slate-200'}`}>
+                            <div key={task.id} className={`p-2.5 rounded-2xl border-2 flex flex-col h-fit min-h-[140px] shadow-sm transition-all hover:shadow-md group/card ${isC ? 'bg-emerald-50 border-emerald-300' : 'bg-white'} ${isOverdue ? 'ring-2 ring-rose-500 ring-offset-2' : ''}`} style={{ borderColor: isC ? undefined : orderColor.replace('bg-', '') }}>
                               <div className="flex justify-between items-start mb-2">
-                                <span className={`text-[10px] font-bold leading-tight line-clamp-2 ${isC ? 'text-emerald-700' : 'text-slate-800'}`}>{task.order.clientName}</span>
+                                <div className="flex flex-col">
+                                  <span className={`text-[10px] font-bold leading-tight line-clamp-2 ${isC ? 'text-emerald-700' : 'text-slate-800'}`}>{task.order.clientName}</span>
+                                  {isOverdue && (
+                                    <span className="flex items-center gap-1 text-[8px] font-black text-rose-600 uppercase mt-1">
+                                      <Clock size={8}/> Просрочена
+                                    </span>
+                                  )}
+                                </div>
                                 <button onClick={e => { e.stopPropagation(); onUpdateTaskPlanning(task.order.id, task.id, undefined, undefined, []); }} className="p-1 text-slate-300 hover:text-rose-500 shrink-0"><X size={10} /></button>
                               </div>
                               <div className="mt-auto space-y-2">
@@ -252,6 +261,7 @@ const Planning: React.FC<PlanningProps> = ({ orders, onAddOrder, onSyncBitrix, o
                                    <div onClick={e => { e.stopPropagation(); setRateMenu({ orderId: task.order.id, taskId: task.id, currentRate: task.rate || 0 }); setTempRate(String(task.rate || '')); }} className={`text-[9px] font-black px-1.5 py-0.5 rounded cursor-pointer transition-all ${task.rate ? 'bg-amber-100 text-amber-600 border border-amber-200' : 'text-slate-300 hover:text-amber-500'}`}>
                                       {task.rate ? `${task.rate} ₽` : '+ Ставка'}
                                    </div>
+                                   <span className="text-[7px] font-black uppercase text-slate-300">ID: {task.order.orderNumber}</span>
                                 </div>
                               </div>
                             </div>

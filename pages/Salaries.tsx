@@ -5,7 +5,7 @@ import { STAGE_CONFIG } from '../constants';
 import { 
   Wallet, TrendingUp, Users, 
   Calendar, Download, ChevronRight, 
-  Banknote, PieChart, Info, Search, X, Clock, Timer, Hash
+  Banknote, PieChart, Info, Search, X, Clock, Timer, Hash, CalendarDays
 } from 'lucide-react';
 
 interface SalariesProps {
@@ -13,52 +13,55 @@ interface SalariesProps {
   staff: User[];
 }
 
-type Period = 'day' | 'week' | 'month' | 'quarter' | 'year';
+const MONTHS = [
+  "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
+  "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"
+];
 
 const Salaries: React.FC<SalariesProps> = ({ orders, staff }) => {
   const [searchTerm, setSearchTerm] = useState('');
-  const [period, setPeriod] = useState<Period>('month');
+  const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
+  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [selectedStaffId, setSelectedStaffId] = useState<string | null>(null);
 
+  // Фильтрация заказов по выбранному месяцу и году
   const filteredOrders = useMemo(() => {
-    const now = new Date();
-    let minDate = new Date();
-    if (period === 'day') {
-       minDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    } else if (period === 'week') {
-       minDate.setDate(now.getDate() - 7);
-    } else if (period === 'month') {
-       minDate.setMonth(now.getMonth() - 1);
-    } else if (period === 'quarter') {
-       minDate.setMonth(now.getMonth() - 3);
-    } else if (period === 'year') {
-       minDate.setFullYear(now.getFullYear() - 1);
-    }
+    return orders.filter(o => {
+      const d = new Date(o.createdAt);
+      return d.getMonth() === selectedMonth && d.getFullYear() === selectedYear;
+    });
+  }, [orders, selectedMonth, selectedYear]);
 
-    return orders.filter(o => new Date(o.createdAt) >= minDate);
-  }, [orders, period]);
-
+  // Расчет статистики выплат
   const salaryStats = useMemo(() => {
     const stats: Record<string, { 
       totalEarned: number, 
       tasksDetails: { orderNo: string, client: string, stage: ProductionStage, share: number, amount: number, date: string }[]
     }> = {};
 
+    // Инициализируем тех, кто СЕЙЧАС в цеху (они всегда в списке)
     staff.filter(s => s.isProduction).forEach(s => {
       stats[s.id] = { totalEarned: 0, tasksDetails: [] };
     });
 
-    filteredOrders.forEach(order => {
+    // Обрабатываем заказы и ищем всех, кто работал
+    orders.forEach(order => {
       order.tasks.forEach(task => {
+        // Проверяем, попадает ли задача в выбранный период
+        const completionDate = task.completedAt || task.plannedDate || order.createdAt;
+        const compD = new Date(completionDate);
+        if (compD.getMonth() !== selectedMonth || compD.getFullYear() !== selectedYear) return;
+
         if (task.status === TaskStatus.COMPLETED && task.rate && task.rate > 0) {
           const totalRate = task.rate;
           const details = task.details || [];
-          const completionDate = task.completedAt || task.plannedDate || order.createdAt;
           
           if (details.length > 0) {
             const scanMap: Record<string, number> = {};
             details.forEach(d => {
-              if (d.scannedBy && stats[d.scannedBy]) {
+              if (d.scannedBy) {
+                // Если сотрудника нет в инициализированных (т.е. он уже не "в цеху"), добавляем его
+                if (!stats[d.scannedBy]) stats[d.scannedBy] = { totalEarned: 0, tasksDetails: [] };
                 scanMap[d.scannedBy] = (scanMap[d.scannedBy] || 0) + (d.quantity || 1);
               }
             });
@@ -79,7 +82,8 @@ const Salaries: React.FC<SalariesProps> = ({ orders, staff }) => {
                   date: completionDate
                 });
               });
-            } else if (task.assignedTo && stats[task.assignedTo]) {
+            } else if (task.assignedTo) {
+              if (!stats[task.assignedTo]) stats[task.assignedTo] = { totalEarned: 0, tasksDetails: [] };
               stats[task.assignedTo].totalEarned += totalRate;
               stats[task.assignedTo].tasksDetails.push({
                 orderNo: order.orderNumber,
@@ -90,7 +94,8 @@ const Salaries: React.FC<SalariesProps> = ({ orders, staff }) => {
                 date: completionDate
               });
             }
-          } else if (task.assignedTo && stats[task.assignedTo]) {
+          } else if (task.assignedTo) {
+            if (!stats[task.assignedTo]) stats[task.assignedTo] = { totalEarned: 0, tasksDetails: [] };
             stats[task.assignedTo].totalEarned += totalRate;
             stats[task.assignedTo].tasksDetails.push({
               orderNo: order.orderNumber,
@@ -109,13 +114,15 @@ const Salaries: React.FC<SalariesProps> = ({ orders, staff }) => {
       const user = staff.find(s => s.id === userId);
       return {
         id: userId,
-        name: user?.name || 'Сотрудник',
+        name: user?.name || `Сотрудник #${userId.slice(-4)}`,
         totalEarned: Math.round(data.totalEarned),
         tasksCount: data.tasksDetails.length,
         details: data.tasksDetails
       };
-    }).sort((a, b) => b.totalEarned - a.totalEarned);
-  }, [filteredOrders, staff]);
+    })
+    .filter(s => s.tasksCount > 0 || (staff.find(u => u.id === s.id)?.isProduction)) // Оставляем либо работавших, либо активных в цеху
+    .sort((a, b) => b.totalEarned - a.totalEarned);
+  }, [orders, staff, selectedMonth, selectedYear]);
 
   const handleExportExcel = () => {
     const header = ["Имя сотрудника", "Всего задач", "Общая сумма (руб)", "Период"];
@@ -123,7 +130,7 @@ const Salaries: React.FC<SalariesProps> = ({ orders, staff }) => {
       s.name,
       s.tasksCount,
       s.totalEarned,
-      period === 'day' ? 'День' : period === 'week' ? 'Неделя' : period === 'month' ? 'Месяц' : period === 'quarter' ? 'Квартал' : 'Год'
+      `${MONTHS[selectedMonth]} ${selectedYear}`
     ]);
 
     let csvContent = "\uFEFF"; 
@@ -133,7 +140,7 @@ const Salaries: React.FC<SalariesProps> = ({ orders, staff }) => {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.setAttribute("href", url);
-    link.setAttribute("download", `Vedomost_${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute("download", `Vedomost_${MONTHS[selectedMonth]}_${selectedYear}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -158,15 +165,17 @@ const Salaries: React.FC<SalariesProps> = ({ orders, staff }) => {
         </div>
         <div className="flex items-center gap-3">
            <div className="flex bg-white p-1 rounded-xl border border-slate-200 shadow-sm">
-             {(['day', 'week', 'month', 'quarter', 'year'] as const).map(p => (
-               <button 
-                 key={p} 
-                 onClick={() => setPeriod(p)}
-                 className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all ${period === p ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-50'}`}
-               >
-                 {p === 'day' ? 'День' : p === 'week' ? 'Неделя' : p === 'month' ? 'Месяц' : p === 'quarter' ? 'Квартал' : 'Год'}
-               </button>
-             ))}
+              <div className="relative flex items-center px-3 border-r border-slate-100">
+                 <CalendarDays size={14} className="text-blue-500 mr-2" />
+                 <select value={selectedMonth} onChange={e => setSelectedMonth(Number(e.target.value))} className="bg-transparent text-xs font-black uppercase outline-none cursor-pointer">
+                    {MONTHS.map((m, i) => <option key={m} value={i}>{m}</option>)}
+                 </select>
+              </div>
+              <div className="px-3 py-1.5">
+                 <select value={selectedYear} onChange={e => setSelectedYear(Number(e.target.value))} className="bg-transparent text-xs font-black uppercase outline-none cursor-pointer">
+                    {[2024, 2025, 2026].map(y => <option key={y} value={y}>{y}</option>)}
+                 </select>
+              </div>
            </div>
            <button onClick={handleExportExcel} className="flex items-center gap-2 px-4 py-2.5 bg-slate-900 text-white rounded-xl text-xs font-bold hover:bg-slate-800 transition-all shadow-lg shadow-slate-900/10">
             <Download size={14} /> Ведомость (Excel)
@@ -178,7 +187,7 @@ const Salaries: React.FC<SalariesProps> = ({ orders, staff }) => {
         <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
           <div className="flex items-center gap-3 mb-4">
             <div className="p-3 bg-blue-50 text-blue-600 rounded-2xl"><Wallet size={20} /></div>
-            <div className="text-xs font-black text-slate-400 uppercase tracking-widest">Общий фонд</div>
+            <div className="text-xs font-black text-slate-400 uppercase tracking-widest">Фонд: {MONTHS[selectedMonth]}</div>
           </div>
           <div className="text-3xl font-black text-slate-800">{totalPayout.toLocaleString('ru-RU')} ₽</div>
         </div>
@@ -194,7 +203,7 @@ const Salaries: React.FC<SalariesProps> = ({ orders, staff }) => {
         <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
           <div className="flex items-center gap-3 mb-4">
             <div className="p-3 bg-indigo-50 text-indigo-600 rounded-2xl"><PieChart size={20} /></div>
-            <div className="text-xs font-black text-slate-400 uppercase tracking-widest">Закрыто задач</div>
+            <div className="text-xs font-black text-slate-400 uppercase tracking-widest">Задач закрыто</div>
           </div>
           <div className="text-3xl font-black text-slate-800">
             {salaryStats.reduce((acc, s) => acc + s.tasksCount, 0)}
@@ -208,6 +217,7 @@ const Salaries: React.FC<SalariesProps> = ({ orders, staff }) => {
              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
              <input type="text" placeholder="Поиск сотрудника..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500/20" />
           </div>
+          <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Найдено: {filteredSalaries.length}</div>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
@@ -215,7 +225,7 @@ const Salaries: React.FC<SalariesProps> = ({ orders, staff }) => {
               <tr className="bg-slate-50/50 text-[10px] font-black text-slate-400 uppercase tracking-widest">
                 <th className="px-8 py-4">Сотрудник</th>
                 <th className="px-8 py-4 text-center">Задач</th>
-                <th className="px-8 py-4">Активность</th>
+                <th className="px-8 py-4">Активность в периоде</th>
                 <th className="px-8 py-4 text-right">Сумма</th>
               </tr>
             </thead>
@@ -227,7 +237,10 @@ const Salaries: React.FC<SalariesProps> = ({ orders, staff }) => {
                       <div className="w-10 h-10 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center font-black overflow-hidden shadow-sm">
                         {stat.name.charAt(0)}
                       </div>
-                      <div className="font-bold text-slate-800">{stat.name}</div>
+                      <div>
+                        <div className="font-bold text-slate-800">{stat.name}</div>
+                        {!staff.find(u => u.id === stat.id)?.isProduction && <div className="text-[8px] font-black text-amber-600 uppercase">Не в цеху (архив работ)</div>}
+                      </div>
                     </div>
                   </td>
                   <td className="px-8 py-5 text-center">
@@ -241,16 +254,20 @@ const Salaries: React.FC<SalariesProps> = ({ orders, staff }) => {
                           <span className="text-[8px] font-black text-slate-400 uppercase tracking-tighter truncate w-20">{d.client}</span>
                         </div>
                       ))}
+                      {stat.details.length > 3 && <div className="text-[9px] font-black text-slate-300 self-center">+{stat.details.length - 3}</div>}
                     </div>
                   </td>
                   <td className="px-8 py-5 text-right">
                     <div className="flex items-center justify-end gap-4">
                       <div className="text-lg font-black text-slate-800">{stat.totalEarned.toLocaleString('ru-RU')} ₽</div>
-                      <ChevronRight size={14} className="text-slate-300" />
+                      <ChevronRight size={14} className="text-slate-300 transition-transform group-hover:translate-x-1" />
                     </div>
                   </td>
                 </tr>
               ))}
+              {filteredSalaries.length === 0 && (
+                <tr><td colSpan={4} className="px-8 py-20 text-center text-slate-400 font-bold uppercase text-[10px] tracking-widest opacity-30 italic">Нет данных за выбранный месяц</td></tr>
+              )}
             </tbody>
           </table>
         </div>
@@ -267,7 +284,7 @@ const Salaries: React.FC<SalariesProps> = ({ orders, staff }) => {
                   <div>
                     <h3 className="text-2xl font-black text-slate-800">{selectedStaffDetails.name}</h3>
                     <div className="flex items-center gap-4 mt-1">
-                      <div className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1"><PieChart size={14}/> {selectedStaffDetails.tasksCount} задач</div>
+                      <div className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1"><PieChart size={14}/> {selectedStaffDetails.tasksCount} задач в периоде</div>
                       <div className="text-xs font-black text-emerald-600 uppercase tracking-widest flex items-center gap-1"><Banknote size={14}/> {selectedStaffDetails.totalEarned.toLocaleString('ru-RU')} ₽</div>
                     </div>
                   </div>

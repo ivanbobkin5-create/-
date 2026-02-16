@@ -39,6 +39,7 @@ const Schedule: React.FC<ScheduleProps> = ({ staff, currentUser, shifts, onToggl
     return currentUser.id === userId;
   };
 
+  // Отображаем только тех, кто отмечен "В цеху"
   const productionStaff = staff.filter(s => s.isProduction);
 
   return (
