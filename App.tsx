@@ -37,6 +37,7 @@ const STORAGE_KEYS = {
   CACHE_SESSIONS: 'woodplan_cache_sessions',
 };
 
+// ТЕПЕРЬ ОБЛАКО ВКЛЮЧЕНО ПО УМОЛЧАНИЮ ДЛЯ ВСЕХ
 const INITIAL_BITRIX_CONFIG: BitrixConfig = {
   enabled: false,
   webhookUrl: '',
@@ -50,8 +51,8 @@ const INITIAL_BITRIX_CONFIG: BitrixConfig = {
     description: 'COMMENTS'
   },
   cloud: { 
-    enabled: false, 
-    apiUrl: '', 
+    enabled: true, // ВКЛЮЧЕНО
+    apiUrl: '',    // Пусто = использовать текущий домен /api
     apiToken: 'MebelPlan_2025_Secure'
   }
 };
@@ -76,11 +77,13 @@ const App: React.FC = () => {
   const [isSyncing, setIsSyncing] = useState(false);
   const [dbStatus, setDbStatus] = useState<'loading' | 'online' | 'offline' | 'local'>('loading');
 
-  useEffect(() => {
-    const initData = async () => {
-      setDbStatus('loading');
-      
-      if (bitrixConfig.cloud?.enabled && bitrixConfig.cloud.apiUrl) {
+  // Функция первичной загрузки данных
+  const initData = useCallback(async () => {
+    setDbStatus('loading');
+    
+    // Если облако включено (а теперь оно включено по умолчанию)
+    if (bitrixConfig.cloud?.enabled) {
+      try {
         const cloudData = await dbService.loadFromCloud(bitrixConfig.cloud);
         if (cloudData) {
           setOrders(cloudData.orders || []);
@@ -89,31 +92,38 @@ const App: React.FC = () => {
           setShifts(cloudData.shifts || {});
           setDbStatus('online');
           
+          // Обновляем локальный кэш
           localStorage.setItem(STORAGE_KEYS.CACHE_ORDERS, JSON.stringify(cloudData.orders || []));
           localStorage.setItem(STORAGE_KEYS.CACHE_STAFF, JSON.stringify(cloudData.staff || []));
+          localStorage.setItem(STORAGE_KEYS.CACHE_SHIFTS, JSON.stringify(cloudData.shifts || {}));
+          localStorage.setItem(STORAGE_KEYS.CACHE_SESSIONS, JSON.stringify(cloudData.sessions || []));
           return;
-        } else {
-          setDbStatus('offline');
         }
+      } catch (e) {
+        console.error("Cloud load failed", e);
       }
+      setDbStatus('offline');
+    }
 
-      const cachedOrders = JSON.parse(localStorage.getItem(STORAGE_KEYS.CACHE_ORDERS) || '[]');
-      const cachedStaff = JSON.parse(localStorage.getItem(STORAGE_KEYS.CACHE_STAFF) || '[]');
-      const cachedShifts = JSON.parse(localStorage.getItem(STORAGE_KEYS.CACHE_SHIFTS) || '{}');
-      const cachedSessions = JSON.parse(localStorage.getItem(STORAGE_KEYS.CACHE_SESSIONS) || '[]');
-      
-      setOrders(cachedOrders);
-      setStaff(cachedStaff);
-      setShifts(cachedShifts);
-      setSessions(cachedSessions);
-      if (!bitrixConfig.cloud?.enabled) setDbStatus('local');
-    };
+    // Фолбэк на локальный кэш, если облако недоступно
+    const cachedOrders = JSON.parse(localStorage.getItem(STORAGE_KEYS.CACHE_ORDERS) || '[]');
+    const cachedStaff = JSON.parse(localStorage.getItem(STORAGE_KEYS.CACHE_STAFF) || '[]');
+    const cachedShifts = JSON.parse(localStorage.getItem(STORAGE_KEYS.CACHE_SHIFTS) || '{}');
+    const cachedSessions = JSON.parse(localStorage.getItem(STORAGE_KEYS.CACHE_SESSIONS) || '[]');
+    
+    setOrders(cachedOrders);
+    setStaff(cachedStaff);
+    setShifts(cachedShifts);
+    setSessions(cachedSessions);
+    if (!bitrixConfig.cloud?.enabled) setDbStatus('local');
+  }, [bitrixConfig.cloud]);
 
+  useEffect(() => {
     initData();
-  }, [bitrixConfig.cloud?.enabled, bitrixConfig.cloud?.apiUrl]);
+  }, [initData]);
 
   const syncWithCloud = useCallback(async () => {
-    if (!bitrixConfig.cloud?.enabled || !bitrixConfig.cloud?.apiUrl) {
+    if (!bitrixConfig.cloud?.enabled) {
       localStorage.setItem(STORAGE_KEYS.CACHE_ORDERS, JSON.stringify(orders));
       localStorage.setItem(STORAGE_KEYS.CACHE_STAFF, JSON.stringify(staff));
       localStorage.setItem(STORAGE_KEYS.CACHE_SHIFTS, JSON.stringify(shifts));
@@ -128,12 +138,14 @@ const App: React.FC = () => {
     if (result && result.success) {
       setDbStatus('online');
       localStorage.setItem(STORAGE_KEYS.CACHE_ORDERS, JSON.stringify(orders));
+      localStorage.setItem(STORAGE_KEYS.CACHE_STAFF, JSON.stringify(staff));
     } else {
       setDbStatus('offline');
     }
     setIsSyncing(false);
   }, [orders, staff, sessions, shifts, bitrixConfig.cloud]);
 
+  // Авто-синхронизация при изменениях (с задержкой)
   useEffect(() => {
     const timer = setTimeout(() => {
       if (dbStatus !== 'loading') syncWithCloud();
@@ -278,6 +290,19 @@ const App: React.FC = () => {
     setUser(newUser);
   };
 
+  // ЕСЛИ ИДЕТ ЗАГРУЗКА ИЗ ОБЛАКА - ПОКАЗЫВАЕМ ЭКРАН ОЖИДАНИЯ ДАЖЕ ПЕРЕД ЛОГИНОМ
+  if (dbStatus === 'loading') {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center space-y-6">
+        <Loader2 size={48} className="text-blue-500 animate-spin" />
+        <div className="text-center">
+          <h2 className="text-white font-black uppercase tracking-widest text-sm">МебельПлан</h2>
+          <p className="text-slate-500 text-[10px] uppercase font-bold mt-2">Подключение к центральной базе данных...</p>
+        </div>
+      </div>
+    );
+  }
+
   if (!user) return <LoginPage onLogin={(role, email, pass) => {
     if (role === UserRole.SITE_ADMIN) {
       setUser({ id: 'sa', name: 'Администратор', email: 'admin@system.ru', role: UserRole.SITE_ADMIN });
@@ -287,11 +312,10 @@ const App: React.FC = () => {
     if (foundUser && foundUser.password === pass) {
       setUser(foundUser);
     } else {
-      return "Неверный логин или пароль";
+      return "Неверный логин или пароль. (Зарегистрируйтесь, если вы новый клиент)";
     }
   }} onRegister={handleRegister} />;
 
-  // Глобальный вид для Администратора Сайта (Core)
   if (user.role === UserRole.SITE_ADMIN) {
     return (
       <SiteAdmin 
@@ -316,10 +340,9 @@ const App: React.FC = () => {
              <h1 className="text-xl font-bold uppercase tracking-tight text-slate-800">{currentPage}</h1>
              <div className="h-4 w-px bg-slate-200"></div>
              <div className="flex items-center gap-2">
-                {dbStatus === 'loading' && <div className="flex items-center gap-1.5 text-blue-500 animate-pulse"><Loader2 size={14} className="animate-spin"/> <span className="text-[10px] font-black uppercase">Загрузка из облака...</span></div>}
-                {dbStatus === 'online' && <div className="flex items-center gap-1.5 text-emerald-500"><CloudCheck size={14}/> <span className="text-[10px] font-black uppercase">Timeweb: OK</span></div>}
-                {dbStatus === 'offline' && <div className="flex items-center gap-1.5 text-rose-500"><CloudOff size={14}/> <span className="text-[10px] font-black uppercase">Ошибка связи</span></div>}
-                {dbStatus === 'local' && <div className="flex items-center gap-1.5 text-amber-500"><Database size={14}/> <span className="text-[10px] font-black uppercase">Локальный кэш</span></div>}
+                {dbStatus === 'online' && <div className="flex items-center gap-1.5 text-emerald-500"><CloudCheck size={14}/> <span className="text-[10px] font-black uppercase">Облако: OK</span></div>}
+                {dbStatus === 'offline' && <div className="flex items-center gap-1.5 text-rose-500"><CloudOff size={14}/> <span className="text-[10px] font-black uppercase">Автономный режим</span></div>}
+                {dbStatus === 'local' && <div className="flex items-center gap-1.5 text-amber-500"><Database size={14}/> <span className="text-[10px] font-black uppercase">Локально</span></div>}
              </div>
           </div>
 
@@ -339,37 +362,27 @@ const App: React.FC = () => {
         </header>
 
         <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
-          {dbStatus === 'loading' && (
-            <div className="h-full flex flex-col items-center justify-center space-y-4 opacity-50">
-               <Loader2 size={48} className="text-blue-600 animate-spin" />
-               <p className="text-xs font-black uppercase tracking-widest text-slate-400">Подключение к облаку Timeweb...</p>
-            </div>
+          {currentPage === 'dashboard' && <Dashboard orders={orders} staff={staff} />}
+          {currentPage === 'planning' && (
+            <Planning 
+              orders={orders} 
+              onAddOrder={addOrder}
+              onSyncBitrix={async () => 0} 
+              onUpdateTaskPlanning={updateTaskPlanning} 
+              onUpdateTaskRate={updateTaskRate} 
+              onDeleteTask={deleteTask}
+              isBitrixEnabled={bitrixConfig.enabled} 
+              bitrixConfig={bitrixConfig} 
+              staff={staff.filter(s => s.isProduction)} 
+              shifts={shifts} 
+            />
           )}
-          {dbStatus !== 'loading' && (
-            <>
-              {currentPage === 'dashboard' && <Dashboard orders={orders} staff={staff} />}
-              {currentPage === 'planning' && (
-                <Planning 
-                  orders={orders} 
-                  onAddOrder={addOrder}
-                  onSyncBitrix={async () => 0} 
-                  onUpdateTaskPlanning={updateTaskPlanning} 
-                  onUpdateTaskRate={updateTaskRate} 
-                  onDeleteTask={deleteTask}
-                  isBitrixEnabled={bitrixConfig.enabled} 
-                  bitrixConfig={bitrixConfig} 
-                  staff={staff.filter(s => s.isProduction)} 
-                  shifts={shifts} 
-                />
-              )}
-              {currentPage === 'schedule' && <Schedule staff={staff} currentUser={user} shifts={shifts} onToggleShift={toggleShift} />}
-              {currentPage === 'production' && <ProductionBoard orders={orders} onUpdateTask={updateTaskStatus} onAddAccomplice={addAccomplice} onUpdateDetails={updateTaskDetails} staff={staff} currentUser={user} onAddB24Comment={async () => {}} isShiftActive={!!activeSession} shifts={shifts} onTriggerShiftFlash={() => {}} />}
-              {currentPage === 'reports' && <Reports orders={orders} staff={staff} workSessions={sessions} />}
-              {currentPage === 'salaries' && <Salaries orders={orders} staff={staff} />}
-              {currentPage === 'users' && <UsersManagement staff={staff} onSync={async () => 0} isBitrixEnabled={bitrixConfig.enabled} onToggleProduction={(id) => updateStaffMember(id, { isProduction: !staff.find(s => s.id === id)?.isProduction })} onUpdateStaff={updateStaffMember} />}
-              {currentPage === 'settings' && <Settings config={bitrixConfig} setConfig={setBitrixConfig} onExport={() => {}} onImport={() => {}} onClear={() => {}} />}
-            </>
-          )}
+          {currentPage === 'schedule' && <Schedule staff={staff} currentUser={user} shifts={shifts} onToggleShift={toggleShift} />}
+          {currentPage === 'production' && <ProductionBoard orders={orders} onUpdateTask={updateTaskStatus} onAddAccomplice={addAccomplice} onUpdateDetails={updateTaskDetails} staff={staff} currentUser={user} onAddB24Comment={async () => {}} isShiftActive={!!activeSession} shifts={shifts} onTriggerShiftFlash={() => {}} />}
+          {currentPage === 'reports' && <Reports orders={orders} staff={staff} workSessions={sessions} />}
+          {currentPage === 'salaries' && <Salaries orders={orders} staff={staff} />}
+          {currentPage === 'users' && <UsersManagement staff={staff} onSync={async () => 0} isBitrixEnabled={bitrixConfig.enabled} onToggleProduction={(id) => updateStaffMember(id, { isProduction: !staff.find(s => s.id === id)?.isProduction })} onUpdateStaff={updateStaffMember} />}
+          {currentPage === 'settings' && <Settings config={bitrixConfig} setConfig={setBitrixConfig} onExport={() => {}} onImport={() => {}} onClear={() => {}} />}
         </div>
       </main>
     </div>
