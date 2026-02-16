@@ -2,13 +2,14 @@
   RewriteEngine On
   RewriteBase /
   
-  # Если запрашиваемый файл api.php существует, не перенаправлять его
-  RewriteCond %{REQUEST_FILENAME} -f
-  RewriteRule ^api\.php$ - [L]
+  # Правило №1: Если запрос идет к любому .php файлу - НЕ ПЕРЕНАПРАВЛЯТЬ
+  RewriteRule ^(.*)\.php$ - [L]
 
-  # Остальные правила для SPA (React/Vite)
-  RewriteRule ^index\.html$ - [L]
-  RewriteCond %{REQUEST_FILENAME} !-f
-  RewriteCond %{REQUEST_FILENAME} !-d
+  # Правило №2: Если файл или папка реально существуют - НЕ ПЕРЕНАПРАВЛЯТЬ
+  RewriteCond %{REQUEST_FILENAME} -f [OR]
+  RewriteCond %{REQUEST_FILENAME} -d
+  RewriteRule ^ - [L]
+
+  # Правило №3: Все остальное на index.html
   RewriteRule . /index.html [L]
 </IfModule>

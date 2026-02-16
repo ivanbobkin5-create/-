@@ -8,6 +8,7 @@ export const dbService = {
     const url = config.apiUrl.trim();
 
     try {
+      console.log(`[Cloud] Testing connection to: ${url}`);
       const response = await fetch(`${url}?action=test`, {
         method: 'GET',
         headers: { 
@@ -20,14 +21,16 @@ export const dbService = {
       const text = await response.text();
       const trimmed = text.trim();
       
-      // КРИТИЧЕСКАЯ ПРОВЕРКА: Если сервер выдал HTML
+      // Логируем тип контента для отладки в консоли браузера
+      const contentType = response.headers.get('content-type');
+      console.log(`[Cloud] Response Status: ${response.status}, Content-Type: ${contentType}`);
+
       if (trimmed.toLowerCase().startsWith('<!doctype') || trimmed.includes('<html')) {
-        console.error('SERVER REDIRECT ERROR: Received HTML instead of JSON.');
-        console.log('Response content preview:', trimmed.slice(0, 500));
-        
+        console.error('SERVER CONFIG ERROR: API URL returned HTML instead of JSON.');
+        console.log('Body preview:', trimmed.slice(0, 300));
         return { 
           success: false, 
-          message: `Ошибка: Файл api.php не найден или сервер перенаправляет запрос на главную. Убедитесь, что в URL указано /api.php в конце.` 
+          message: `Сервер TimeWeb вернул страницу сайта вместо ответа API. Проверьте, что файл api.php загружен в корень и URL в настройках верный.` 
         };
       }
 
@@ -35,20 +38,17 @@ export const dbService = {
         return { success: false, message: '403: Ошибка токена. Проверьте "MebelPlan_2025_Secure"' };
       }
 
-      let data;
       try {
-        data = JSON.parse(trimmed);
+        const data = JSON.parse(trimmed);
+        if (!response.ok) return { success: false, message: data.message || `Ошибка ${response.status}` };
+        return { success: data.success, message: data.message || 'Связь установлена' };
       } catch (e) {
-        return { success: false, message: `Ошибка парсинга JSON (Статус ${response.status})` };
+        console.error('JSON Parse Error. Raw text:', trimmed);
+        return { success: false, message: `Ошибка: сервер прислал не JSON (Код ${response.status})` };
       }
-
-      if (!response.ok) {
-        return { success: false, message: data.message || `Ошибка сервера ${response.status}` };
-      }
-      
-      return { success: data.success, message: data.message || 'Связь установлена' };
     } catch (err: any) {
-      return { success: false, message: 'Сетевая ошибка или CORS. Проверьте https://' };
+      console.error('[Cloud] Network Error:', err);
+      return { success: false, message: 'Сетевая ошибка. Возможно, сервер TimeWeb блокирует CORS запросы.' };
     }
   },
 

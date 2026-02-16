@@ -1,29 +1,26 @@
 <?php
 /**
- * CLOUD API FOR MEBELPLAN ERP (v2.3)
+ * CLOUD API FOR MEBELPLAN ERP (v2.4)
  * PostgreSQL SSL verify-full
  */
 
-// 1. Отключаем любой вывод ошибок в поток, чтобы не испортить JSON
+// 1. Настройка вывода
 error_reporting(0);
 ini_set('display_errors', 0);
 
-// 2. Устанавливаем заголовки сразу
 header("Access-Control-Allow-Origin: *");
 header("Access-Control-Allow-Methods: GET, POST, OPTIONS");
 header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With");
 header('Content-Type: application/json; charset=utf-8');
 
-// Обработка Preflight запроса
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
     exit(0);
 }
 
-// Буферизация, чтобы очистить случайный мусор
 ob_start();
 
-// Конфигурация
+// 2. Конфигурация БД
 $db_config = [
     'host'     => '9f0f9288b234fa7e684a9441.twc1.net',
     'port'     => '5432',
@@ -41,30 +38,24 @@ function sendJson($data, $code = 200) {
     exit;
 }
 
-// Проверка токена
-function getRequestHeader($name) {
-    $headers = array_change_key_case(getallheaders(), CASE_LOWER);
-    return $headers[strtolower($name)] ?? null;
-}
-
-$auth = getRequestHeader('Authorization');
+// 3. Авторизация
+$headers = array_change_key_case(getallheaders(), CASE_LOWER);
+$auth = $headers['authorization'] ?? null;
 if ($auth !== "Bearer " . $db_config['token']) {
-    sendJson(['success' => false, 'message' => 'Invalid API Token'], 403);
+    sendJson(['success' => false, 'message' => 'Unauthorized: Invalid Token'], 403);
 }
 
-// Проверка расширения PDO
-if (!extension_loaded('pdo_pgsql')) {
-    sendJson(['success' => false, 'message' => 'PHP pdo_pgsql extension missing on server'], 500);
-}
-
-// Загрузка сертификата SSL
-$cert_path = __DIR__ . '/root.crt';
+// 4. Работа с сертификатом во временной папке (решает проблему прав записи)
+$cert_path = sys_get_temp_dir() . '/tw_db_root.crt';
 if (!file_exists($cert_path)) {
     $cert_data = @file_get_contents($db_config['ssl_cert']);
-    if ($cert_data) file_put_contents($cert_path, $cert_data);
+    if ($cert_data) {
+        @file_put_contents($cert_path, $cert_data);
+    }
 }
 
 try {
+    // Подключаемся к Postgres
     $dsn = "pgsql:host={$db_config['host']};port={$db_config['port']};dbname={$db_config['dbname']};sslmode=verify-full;sslrootcert={$cert_path}";
     $pdo = new PDO($dsn, $db_config['user'], $db_config['pass'], [
         PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
@@ -85,7 +76,7 @@ try {
     } else {
         if ($action === 'test') {
             $ver = $pdo->query("SELECT version()")->fetchColumn();
-            sendJson(['success' => true, 'message' => 'Connected to Timeweb PostgreSQL', 'version' => $ver]);
+            sendJson(['success' => true, 'message' => 'API OK (Cloud Database Connected)', 'db' => $ver]);
         } elseif ($action === 'load') {
             $stmt = $pdo->query("SELECT content FROM woodplan_data WHERE id = 1");
             $row = $stmt->fetch(PDO::FETCH_ASSOC);
