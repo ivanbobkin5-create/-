@@ -97,22 +97,20 @@ const Planning: React.FC<PlanningProps> = ({ orders, onAddOrder, onSyncBitrix, o
   }, [orders, groupingMode, inboxSearch]);
 
   const scheduledTasks = useMemo(() => {
-    const weekMap: Record<string, Record<ProductionStage, (Task & { order: Order })[]>> = {};
+    const weekMap: Record<string, Record<string, (Task & { order: Order })[]>> = {};
     weekDays.forEach(day => {
       const key = formatDateKey(day); 
-      weekMap[key] = {
-        [ProductionStage.SAWING]: [],
-        [ProductionStage.EDGE_BANDING]: [],
-        [ProductionStage.DRILLING]: [],
-        [ProductionStage.KIT_ASSEMBLY]: [],
-        [ProductionStage.PACKAGING]: [],
-        [ProductionStage.SHIPMENT]: []
-      };
+      weekMap[key] = {};
+      STAGE_SEQUENCE.forEach(stage => {
+        weekMap[key][stage] = [];
+      });
     });
     orders.forEach(order => {
       order.tasks.forEach(task => {
         if (task.plannedDate && weekMap[task.plannedDate]) {
-          weekMap[task.plannedDate][task.stage].push({ ...task, order });
+          const stageKey = task.stage as string;
+          if (!weekMap[task.plannedDate][stageKey]) weekMap[task.plannedDate][stageKey] = [];
+          weekMap[task.plannedDate][stageKey].push({ ...task, order });
         }
       });
     });
@@ -183,14 +181,14 @@ const Planning: React.FC<PlanningProps> = ({ orders, onAddOrder, onSyncBitrix, o
           <div className="flex bg-white rounded-xl border border-slate-200 p-1 shadow-sm">
             <button onClick={prevWeek} className="p-2 hover:bg-slate-50 rounded-lg"><ChevronLeft size={20} /></button>
             <div className="px-4 py-2 text-sm font-bold flex items-center gap-2"><CalendarIcon size={16} className="text-blue-500" />{weekDays[0].toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })} — {weekDays[6].toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', year: 'numeric' })}</div>
-            <button onClick={nextWeek} className="p-2 hover:bg-slate-50 rounded-lg"><ChevronRight size={20} /></button>
+            <button onClick={nextWeek} className="p-2 hover:bg-white rounded-lg"><ChevronRight size={20} /></button>
           </div>
         </div>
 
         <div className="flex-1 bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden flex flex-col relative">
           <div className="flex border-b border-slate-100 bg-slate-50/50 sticky top-0 z-20 shrink-0">
             <div className="w-40 p-4 border-r border-slate-100 flex items-center justify-center text-[10px] font-black text-slate-400 uppercase tracking-wider">Участки</div>
-            <div className="flex-1 grid grid-cols-7 divide-x divide-slate-100">
+            <div className="flex-1 grid grid-cols-7 divide-x divide-slate-100 overflow-hidden">
               {weekDays.map(day => (
                 <div key={day.toString()} className="p-4 text-center">
                   <div className="text-[10px] font-black uppercase text-slate-400">{day.toLocaleDateString('ru-RU', { weekday: 'short' })}</div>
@@ -201,15 +199,16 @@ const Planning: React.FC<PlanningProps> = ({ orders, onAddOrder, onSyncBitrix, o
           </div>
           <div className="flex-1 overflow-y-auto custom-scrollbar">
             {STAGE_SEQUENCE.map(stage => (
-              <div key={stage} className="flex border-b border-slate-100 min-h-[160px]">
+              <div key={stage} className="flex border-b border-slate-100 min-h-[160px] items-stretch">
                 <div className="w-40 bg-slate-50/30 p-4 border-r border-slate-100 flex flex-col items-center justify-center gap-2 shrink-0">
                   <div className={`p-2 rounded-xl text-white shadow-sm ${STAGE_CONFIG[stage].color}`}>{STAGE_CONFIG[stage].icon}</div>
                   <div className="text-[11px] font-black text-slate-700 text-center uppercase leading-tight">{STAGE_CONFIG[stage].label}</div>
                 </div>
-                <div className="flex-1 grid grid-cols-7 divide-x divide-slate-100 h-full">
+                <div className="flex-1 grid grid-cols-7 divide-x divide-slate-100">
                   {weekDays.map(day => {
                     const dk = formatDateKey(day); 
-                    const tasks = scheduledTasks[dk]?.[stage] || [];
+                    const stageKey = stage as string;
+                    const tasks = scheduledTasks[dk]?.[stageKey] || [];
                     const canAssign = !!(selectedTaskId && orders.find(o => o.id === selectedTaskId.orderId)?.tasks.find(t => t.id === selectedTaskId.taskId)?.stage === stage);
                     
                     return (
@@ -220,7 +219,7 @@ const Planning: React.FC<PlanningProps> = ({ orders, onAddOrder, onSyncBitrix, o
                             onUpdateTaskPlanning(selectedTaskId.orderId, selectedTaskId.taskId, dk, undefined, []);
                           }
                         }} 
-                        className={`flex-1 p-2 relative group/cell flex flex-col gap-2 min-h-full ${canAssign ? 'bg-emerald-50/40 cursor-pointer ring-2 ring-inset ring-emerald-500/20 z-10' : ''}`}
+                        className={`relative h-full flex flex-col gap-2 p-2 ${canAssign ? 'cursor-pointer bg-emerald-50/40 ring-4 ring-inset ring-emerald-500/20 z-10' : ''}`}
                       >
                         {tasks.map(task => {
                           const isC = task.status === TaskStatus.COMPLETED; 

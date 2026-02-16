@@ -165,28 +165,53 @@ const App: React.FC = () => {
     setIsSyncing(true);
     try {
       const baseUrl = bitrixConfig.webhookUrl.replace(/\/$/, '');
-      const response = await fetch(`${baseUrl}/user.get.json`, { method: 'POST' });
+      // Добавляем фильтр ACTIVE: 'Y', чтобы Битрикс сразу отдавал только работающих
+      const response = await fetch(`${baseUrl}/user.get.json`, { 
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          FILTER: { ACTIVE: 'Y' }
+        })
+      });
       const data = await response.json();
       const b24Users = data.result || [];
       let count = 0;
       const newStaff = [...staff];
+      
       b24Users.forEach((u: any) => {
-        // Исключаем уволенных (ACTIVE !== 'Y')
+        // У Битрикса "уволен" - это ACTIVE !== 'Y'
         if (u.ACTIVE !== 'Y') return;
 
-        if (!newStaff.some(s => s.email === u.EMAIL)) {
+        // Проверяем по externalId или email (если он есть)
+        const isDuplicate = newStaff.some(s => 
+          s.id === `U-B24-${u.ID}` || 
+          (u.EMAIL && s.email.toLowerCase() === u.EMAIL.toLowerCase())
+        );
+
+        if (!isDuplicate) {
           newStaff.push({
-            id: 'U-' + Math.random().toString(36).substr(2, 9), email: u.EMAIL, name: `${u.NAME} ${u.LAST_NAME}`,
-            role: UserRole.EMPLOYEE, isProduction: true, avatar: u.PERSONAL_PHOTO, source: 'BITRIX24'
+            id: `U-B24-${u.ID}`, 
+            email: u.EMAIL || `user_${u.ID}@bitrix24.ru`, 
+            name: `${u.NAME} ${u.LAST_NAME}`.trim() || `Сотрудник B24 #${u.ID}`,
+            role: UserRole.EMPLOYEE, 
+            isProduction: true, 
+            avatar: u.PERSONAL_PHOTO, 
+            source: 'BITRIX24',
+            password: '123' // Пароль по умолчанию для входа
           });
           count++;
         }
       });
+
       if (count > 0) setStaff(newStaff);
       setIsSyncing(false);
-      showToast(`Добавлено ${count} активных сотрудников`);
+      showToast(count > 0 ? `Добавлено ${count} активных сотрудников` : "Новых активных сотрудников не найдено");
       return count;
-    } catch (e) { setIsSyncing(false); return 0; }
+    } catch (e) { 
+      setIsSyncing(false); 
+      showToast("Ошибка импорта сотрудников", "error");
+      return 0; 
+    }
   };
 
   const updateTaskStatus = (orderId: string, taskId: string, newStatus: TaskStatus | 'RESUME', comment?: string) => {
