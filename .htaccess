@@ -2,14 +2,19 @@
   RewriteEngine On
   RewriteBase /
   
-  # Правило №1: Если запрос идет к любому .php файлу - НЕ ПЕРЕНАПРАВЛЯТЬ
-  RewriteRule ^(.*)\.php$ - [L]
+  # Отключаем перенаправление на страницу ошибок для API (чтобы не получать HTML при 404)
+  <Files "api.php">
+    ErrorDocument 404 default
+  </Files>
 
-  # Правило №2: Если файл или папка реально существуют - НЕ ПЕРЕНАПРАВЛЯТЬ
+  # 1. Если это физический файл api.php - прекращаем обработку и запускаем его
+  RewriteRule ^api\.php$ - [L]
+
+  # 2. Если файл или папка реально существуют (картинки, js, css) - не трогаем
   RewriteCond %{REQUEST_FILENAME} -f [OR]
   RewriteCond %{REQUEST_FILENAME} -d
   RewriteRule ^ - [L]
 
-  # Правило №3: Все остальное на index.html
+  # 3. Все остальные запросы отправляем на index.html (SPA роутинг)
   RewriteRule . /index.html [L]
 </IfModule>

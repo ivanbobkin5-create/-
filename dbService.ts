@@ -5,7 +5,15 @@ export const dbService = {
   async testConnection(config: CloudConfig): Promise<{ success: boolean; message: string }> {
     if (!config.apiUrl) return { success: false, message: 'URL API не задан' };
     
-    const url = config.apiUrl.trim();
+    let url = config.apiUrl.trim();
+    
+    // Авто-проверка: если URL заканчивается на / или просто домен, подсказываем про api.php
+    if (!url.toLowerCase().endsWith('.php')) {
+      return { 
+        success: false, 
+        message: 'Ошибка: URL должен заканчиваться на /api.php. Добавьте его в настройках.' 
+      };
+    }
 
     try {
       console.log(`[Cloud] Testing connection to: ${url}`);
@@ -21,39 +29,46 @@ export const dbService = {
       const text = await response.text();
       const trimmed = text.trim();
       
-      // Логируем тип контента для отладки в консоли браузера
+      // Логируем тип контента для отладки
       const contentType = response.headers.get('content-type');
-      console.log(`[Cloud] Response Status: ${response.status}, Content-Type: ${contentType}`);
+      const apiHeader = response.headers.get('x-mebelplan-api');
+      console.log(`[Cloud] Status: ${response.status}, Content-Type: ${contentType}, API-Header: ${apiHeader}`);
 
+      // Если в ответе HTML, значит сервер перенаправил запрос на index.html (SPA fallback)
       if (trimmed.toLowerCase().startsWith('<!doctype') || trimmed.includes('<html')) {
-        console.error('SERVER CONFIG ERROR: API URL returned HTML instead of JSON.');
-        console.log('Body preview:', trimmed.slice(0, 300));
+        console.error('SERVER CONFIG ERROR: Received HTML instead of JSON.');
         return { 
           success: false, 
-          message: `Сервер TimeWeb вернул страницу сайта вместо ответа API. Проверьте, что файл api.php загружен в корень и URL в настройках верный.` 
+          message: `Сервер вернул HTML-страницу. Это значит, что файл api.php либо отсутствует по этому адресу, либо сервер перенаправляет запросы на главную. Убедитесь, что api.php загружен на хостинг.` 
         };
       }
 
       if (response.status === 403) {
-        return { success: false, message: '403: Ошибка токена. Проверьте "MebelPlan_2025_Secure"' };
+        return { success: false, message: '403: Неверный токен (Bearer Token)' };
+      }
+
+      if (response.status === 404) {
+        return { success: false, message: '404: Файл api.php не найден на сервере' };
       }
 
       try {
         const data = JSON.parse(trimmed);
-        if (!response.ok) return { success: false, message: data.message || `Ошибка ${response.status}` };
-        return { success: data.success, message: data.message || 'Связь установлена' };
+        if (!response.ok) return { success: false, message: data.message || `Ошибка сервера ${response.status}` };
+        return { success: data.success, message: data.message || 'Связь с базой установлена' };
       } catch (e) {
-        console.error('JSON Parse Error. Raw text:', trimmed);
-        return { success: false, message: `Ошибка: сервер прислал не JSON (Код ${response.status})` };
+        console.error('JSON Parse Error:', trimmed.slice(0, 100));
+        return { success: false, message: 'Ошибка: сервер прислал некорректный ответ (не JSON)' };
       }
     } catch (err: any) {
       console.error('[Cloud] Network Error:', err);
-      return { success: false, message: 'Сетевая ошибка. Возможно, сервер TimeWeb блокирует CORS запросы.' };
+      return { success: false, message: 'Сетевая ошибка. Проверьте интернет или настройки CORS на сервере.' };
     }
   },
 
   async saveToCloud(config: CloudConfig, data: { orders: Order[], staff: User[], sessions: WorkSession[], shifts: any }) {
     if (!config.enabled || !config.apiUrl) return null;
+    if (!config.apiUrl.toLowerCase().endsWith('.php')) return null;
+    
     try {
       const response = await fetch(config.apiUrl, {
         method: 'POST',
@@ -71,6 +86,8 @@ export const dbService = {
 
   async loadFromCloud(config: CloudConfig) {
     if (!config.enabled || !config.apiUrl) return null;
+    if (!config.apiUrl.toLowerCase().endsWith('.php')) return null;
+
     try {
       const response = await fetch(`${config.apiUrl}?action=load`, {
         headers: { 'Authorization': `Bearer ${config.apiToken}`, 'Accept': 'application/json' }
