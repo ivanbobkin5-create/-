@@ -115,7 +115,7 @@ const App: React.FC = () => {
         setSessions(cloudData.sessions || []);
         setShifts(cloudData.shifts || {});
         setDbStatus('ready');
-        console.log("Cloud data loaded successfully");
+        console.log("Cloud data loaded. Staff count:", cloudData.staff?.length);
         return;
       }
     } catch (e) {
@@ -181,6 +181,7 @@ const App: React.FC = () => {
   const handleSyncStaff = useCallback(async () => {
     setIsSyncing(true);
     try {
+      // Здесь должна быть логика импорта из B24. Пока заглушка.
       await new Promise(resolve => setTimeout(resolve, 1000));
       showToast("Сотрудники загружены");
       return 0;
@@ -199,7 +200,7 @@ const App: React.FC = () => {
         <div className="space-y-2">
           <h2 className="text-white font-black uppercase text-sm tracking-widest">МебельПлан</h2>
           <p className="text-slate-500 text-[10px] uppercase tracking-[0.3em] flex items-center justify-center gap-2">
-            <Database size={12}/> Синхронизация с базой TimeWeb...
+            <Database size={12}/> Подключение к базе TimeWeb...
           </p>
         </div>
       </div>
@@ -215,8 +216,8 @@ const App: React.FC = () => {
           localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(found)); 
         } else {
           return staff.length === 0 
-            ? "База данных еще не загружена или пуста. Попробуйте обновить страницу."
-            : "Неверный логин или пароль. Убедитесь, что вы используете e-mail и пароль, выданные администратором.";
+            ? "База данных еще не загружена или пуста. Пожалуйста, обновите страницу."
+            : "Неверный e-mail или пароль. Обратитесь к администратору для получения доступа.";
         }
       }} 
       onRegister={(name, email, pass) => {
@@ -228,6 +229,7 @@ const App: React.FC = () => {
         setStaff(updatedStaff); 
         setUser(u); 
         localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(u));
+        // Принудительная синхронизация сразу после регистрации
         syncWithCloud({ orders, staff: updatedStaff, sessions, shifts });
       }} 
     />;
@@ -263,7 +265,11 @@ const App: React.FC = () => {
           {currentPage === 'schedule' && <Schedule staff={staff} currentUser={user} shifts={shifts} onToggleShift={(uid, d) => setShifts(prev => { const us = { ...(prev[uid] || {}) }; us[d] = !us[d]; return { ...prev, [uid]: us }; })} />}
           {currentPage === 'production' && <ProductionBoard orders={orders} onUpdateTask={updateTaskStatus} onAddAccomplice={(oid, tid, uid) => setOrders(prev => prev.map(o => o.id !== oid ? o : { ...o, tasks: o.tasks.map(t => t.id !== tid ? t : { ...t, accompliceIds: [...new Set([...(t.accompliceIds || []), uid])] }) }))} onUpdateDetails={(oid, tid, d, p) => setOrders(prev => prev.map(o => o.id !== oid ? o : { ...o, tasks: o.tasks.map(t => t.id === tid ? { ...t, details: d, packages: p || t.packages } : t) }))} staff={staff} currentUser={user} onAddB24Comment={async () => {}} isShiftActive={true} shifts={shifts} onTriggerShiftFlash={() => {}} />}
           {currentPage === 'salaries' && <Salaries orders={orders} staff={staff} />}
-          {currentPage === 'users' && <UsersManagement staff={staff} onSync={handleSyncStaff} isBitrixEnabled={bitrixConfig.enabled} onToggleProduction={uid => setStaff(prev => prev.map(u => u.id === uid ? { ...u, isProduction: !u.isProduction } : u))} onUpdateStaff={(uid, upd) => setStaff(prev => prev.map(u => u.id === uid ? { ...u, ...upd } : u))} />}
+          {currentPage === 'users' && <UsersManagement staff={staff} onSync={handleSyncStaff} isBitrixEnabled={bitrixConfig.enabled} onToggleProduction={uid => setStaff(prev => prev.map(u => u.id === uid ? { ...u, isProduction: !u.isProduction } : u))} onUpdateStaff={(uid, upd) => {
+            const updatedStaff = staff.map(u => u.id === uid ? { ...u, ...upd } : u);
+            setStaff(updatedStaff);
+            syncWithCloud({ orders, staff: updatedStaff, sessions, shifts });
+          }} />}
           {currentPage === 'reports' && <Reports orders={orders} staff={staff} workSessions={sessions} />}
           {currentPage === 'archive' && <Archive orders={orders} />}
           {currentPage === 'settings' && <Settings config={bitrixConfig} setConfig={setBitrixConfig} onExport={() => {}} onImport={() => {}} onClear={() => {}} />}
