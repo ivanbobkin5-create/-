@@ -219,7 +219,7 @@ const Planning: React.FC<PlanningProps> = ({ orders, onAddOrder, onSyncBitrix, o
                             onUpdateTaskPlanning(selectedTaskId.orderId, selectedTaskId.taskId, dk, undefined, []);
                           }
                         }} 
-                        className={`relative h-full flex flex-col gap-2 p-2 ${canAssign ? 'cursor-pointer bg-emerald-50/40 ring-4 ring-inset ring-emerald-500/20 z-10' : ''}`}
+                        className={`relative h-full flex flex-col gap-2 p-2 min-h-full ${canAssign ? 'cursor-pointer bg-emerald-50/40 ring-4 ring-inset ring-emerald-500/20 z-10' : ''}`}
                       >
                         {tasks.map(task => {
                           const isC = task.status === TaskStatus.COMPLETED; 

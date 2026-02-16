@@ -52,7 +52,8 @@ const INITIAL_BITRIX_CONFIG: BitrixConfig = {
     enabled: true,
     apiUrl: '',
     apiToken: 'MebelPlan_2025_Secure'
-  }
+  },
+  autoShiftEndTime: '20:00'
 };
 
 const App: React.FC = () => {
@@ -80,6 +81,48 @@ const App: React.FC = () => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3000);
   };
+
+  // Логика автоматического завершения забытых смен
+  const checkAutoCloseSessions = useCallback(() => {
+    if (!bitrixConfig.autoShiftEndTime) return;
+    
+    const [autoH, autoM] = bitrixConfig.autoShiftEndTime.split(':').map(Number);
+    const now = new Date();
+    let hasChanges = false;
+
+    const updatedSessions = sessions.map(session => {
+      if (session.endTime) return session;
+
+      const startTime = new Date(session.startTime);
+      const autoCloseToday = new Date(startTime);
+      autoCloseToday.setHours(autoH, autoM, 0, 0);
+
+      // Если сейчас позже времени автозакрытия И смена была начата до этого времени
+      // Или если смена была начата в предыдущий день
+      const isPastAutoClose = now > autoCloseToday;
+      const isDifferentDay = now.toDateString() !== startTime.toDateString();
+
+      if (isDifferentDay || isPastAutoClose) {
+        hasChanges = true;
+        return { ...session, endTime: autoCloseToday.toISOString() };
+      }
+      return session;
+    });
+
+    if (hasChanges) {
+      setSessions(updatedSessions);
+      showToast("Некоторые смены были завершены автоматически", "success");
+    }
+  }, [sessions, bitrixConfig.autoShiftEndTime]);
+
+  // Проверка автозакрытия при загрузке и раз в 15 минут
+  useEffect(() => {
+    if (dbStatus === 'ready') {
+      checkAutoCloseSessions();
+      const interval = setInterval(checkAutoCloseSessions, 1000 * 60 * 15);
+      return () => clearInterval(interval);
+    }
+  }, [dbStatus, checkAutoCloseSessions]);
 
   const initData = useCallback(async () => {
     if (bitrixConfig.cloud?.enabled) {
@@ -165,39 +208,37 @@ const App: React.FC = () => {
     setIsSyncing(true);
     try {
       const baseUrl = bitrixConfig.webhookUrl.replace(/\/$/, '');
-      // Добавляем фильтр ACTIVE: 'Y', чтобы Битрикс сразу отдавал только работающих
-      const response = await fetch(`${baseUrl}/user.get.json`, { 
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          FILTER: { ACTIVE: 'Y' }
-        })
-      });
+      // Запрашиваем всех пользователей. Фильтрацию ACTIVE сделаем в коде для надежности, 
+      // так как некоторые порталы игнорируют FILTER в теле запроса.
+      const response = await fetch(`${baseUrl}/user.get.json`);
       const data = await response.json();
       const b24Users = data.result || [];
+      
       let count = 0;
       const newStaff = [...staff];
       
       b24Users.forEach((u: any) => {
-        // У Битрикса "уволен" - это ACTIVE !== 'Y'
-        if (u.ACTIVE !== 'Y') return;
+        // У Битрикса работающий - это ACTIVE === true или 'Y'. Уволенный - 'N' или false.
+        const isActive = u.ACTIVE === true || u.ACTIVE === 'Y';
+        if (!isActive) return;
 
-        // Проверяем по externalId или email (если он есть)
+        // Ключ уникальности: внешний ID или Email
+        const b24Id = `U-B24-${u.ID}`;
         const isDuplicate = newStaff.some(s => 
-          s.id === `U-B24-${u.ID}` || 
-          (u.EMAIL && s.email.toLowerCase() === u.EMAIL.toLowerCase())
+          s.id === b24Id || 
+          (u.EMAIL && s.email && s.email.toLowerCase() === u.EMAIL.toLowerCase())
         );
 
         if (!isDuplicate) {
           newStaff.push({
-            id: `U-B24-${u.ID}`, 
+            id: b24Id, 
             email: u.EMAIL || `user_${u.ID}@bitrix24.ru`, 
-            name: `${u.NAME} ${u.LAST_NAME}`.trim() || `Сотрудник B24 #${u.ID}`,
+            name: `${u.NAME || ''} ${u.LAST_NAME || ''}`.trim() || `Сотрудник B24 #${u.ID}`,
             role: UserRole.EMPLOYEE, 
             isProduction: true, 
             avatar: u.PERSONAL_PHOTO, 
             source: 'BITRIX24',
-            password: '123' // Пароль по умолчанию для входа
+            password: '123'
           });
           count++;
         }
@@ -205,7 +246,7 @@ const App: React.FC = () => {
 
       if (count > 0) setStaff(newStaff);
       setIsSyncing(false);
-      showToast(count > 0 ? `Добавлено ${count} активных сотрудников` : "Новых активных сотрудников не найдено");
+      showToast(count > 0 ? `Добавлено ${count} сотрудников` : "Новых активных сотрудников не найдено");
       return count;
     } catch (e) { 
       setIsSyncing(false); 

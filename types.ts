@@ -85,6 +85,7 @@ export interface BitrixConfig {
   portalName?: string;
   portalLogo?: string;
   cloud?: CloudConfig;
+  autoShiftEndTime?: string; // Час в формате "HH:mm"
 }
 
 export interface BitrixFunnel {

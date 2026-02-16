@@ -4,7 +4,7 @@ import { BitrixConfig, BitrixFieldMapping } from '../types';
 import { 
   Share2, Link as LinkIcon, Save, 
   RefreshCw, CheckCircle2, Layout, Database, 
-  MessageSquare, Calendar, ChevronRight, Filter, List
+  MessageSquare, Calendar, ChevronRight, Filter, List, Clock
 } from 'lucide-react';
 
 interface SettingsProps {
@@ -77,11 +77,30 @@ const Settings: React.FC<SettingsProps> = ({ config, setConfig }) => {
         </div>
         
         <div className="p-10 space-y-10">
-           <div className="space-y-3">
-              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-2">Webhook URL</label>
-              <div className="relative">
-                 <LinkIcon className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
-                 <input type="text" value={config.webhookUrl} onChange={e => setConfig({ ...config, webhookUrl: e.target.value })} placeholder="https://portal.bitrix24.ru/rest/..." className="w-full pl-14 pr-6 py-5 bg-slate-50 border border-slate-200 rounded-3xl text-sm font-bold outline-none focus:border-blue-500 transition-all" />
+           <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
+              <div className="space-y-3">
+                 <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-2">Webhook URL</label>
+                 <div className="relative">
+                    <LinkIcon className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
+                    <input type="text" value={config.webhookUrl} onChange={e => setConfig({ ...config, webhookUrl: e.target.value })} placeholder="https://portal.bitrix24.ru/rest/..." className="w-full pl-14 pr-6 py-5 bg-slate-50 border border-slate-200 rounded-3xl text-sm font-bold outline-none focus:border-blue-500 transition-all" />
+                 </div>
+              </div>
+              <div className="space-y-3">
+                 <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-2">Автозавершение смен (время)</label>
+                 <div className="relative">
+                    <Clock className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
+                    <select 
+                      value={config.autoShiftEndTime || '20:00'} 
+                      onChange={e => setConfig({ ...config, autoShiftEndTime: e.target.value })}
+                      className="w-full pl-14 pr-6 py-5 bg-slate-50 border border-slate-200 rounded-3xl text-sm font-bold outline-none focus:border-blue-500 transition-all appearance-none"
+                    >
+                      {Array.from({length: 24}).map((_, i) => {
+                        const h = i < 10 ? `0${i}` : `${i}`;
+                        return <option key={h} value={`${h}:00`}>{h}:00</option>
+                      })}
+                    </select>
+                 </div>
+                 <p className="text-[10px] text-slate-400 px-2 italic">Смена закроется автоматически, если сотрудник забыл нажать кнопку.</p>
               </div>
            </div>
 
