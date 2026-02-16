@@ -28,16 +28,18 @@ const Schedule: React.FC<ScheduleProps> = ({ staff, currentUser, shifts, onToggl
   }, [currentDate]);
 
   const formatDateKey = (date: Date) => date.toISOString().split('T')[0];
-  const productionStaff = staff.filter(s => s.isProduction);
+  
+  // В графике отображаем только тех, кто отмечен "В цеху"
+  const productionStaff = useMemo(() => staff.filter(s => s.isProduction), [staff]);
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
-        <div><h2 className="text-xl font-black text-slate-800 uppercase tracking-tight">График работы</h2><p className="text-sm text-slate-500">Только сотрудники производства («В цеху»)</p></div>
+        <div><h2 className="text-xl font-black text-slate-800 uppercase tracking-tight">График работы</h2><p className="text-sm text-slate-500">Отображаются только сотрудники «В цеху»</p></div>
         <div className="flex bg-slate-50 rounded-xl border border-slate-200 p-1">
-          <button onClick={() => { const d = new Date(currentDate); d.setDate(d.getDate() - 7); setCurrentDate(d); }} className="p-2"><ChevronLeft size={20} /></button>
+          <button onClick={() => { const d = new Date(currentDate); d.setDate(d.getDate() - 7); setCurrentDate(d); }} className="p-2 hover:bg-white rounded-lg transition-all"><ChevronLeft size={20} /></button>
           <div className="px-6 py-2 text-sm font-bold flex items-center gap-2"><CalendarDays size={16} className="text-blue-500" />{weekDays[0].toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })} — {weekDays[6].toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}</div>
-          <button onClick={() => { const d = new Date(currentDate); d.setDate(d.getDate() + 7); setCurrentDate(d); }} className="p-2"><ChevronRight size={20} /></button>
+          <button onClick={() => { const d = new Date(currentDate); d.setDate(d.getDate() + 7); setCurrentDate(d); }} className="p-2 hover:bg-white rounded-lg transition-all"><ChevronRight size={20} /></button>
         </div>
       </div>
       <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
@@ -45,12 +47,12 @@ const Schedule: React.FC<ScheduleProps> = ({ staff, currentUser, shifts, onToggl
           <thead>
             <tr className="bg-slate-50/50">
               <th className="p-6 border-b border-r border-slate-100 w-64 text-[10px] font-black text-slate-400 uppercase tracking-widest">Сотрудник</th>
-              {weekDays.map(day => (<th key={day.toString()} className="p-4 border-b border-slate-100 text-center"><div className="text-sm font-black">{day.getDate()}</div></th>))}
+              {weekDays.map(day => (<th key={day.toString()} className="p-4 border-b border-slate-100 text-center"><div className="text-[10px] font-black uppercase text-slate-400 mb-1">{day.toLocaleDateString('ru-RU', { weekday: 'short' })}</div><div className={`text-sm font-black ${formatDateKey(day) === formatDateKey(new Date()) ? 'text-blue-600' : ''}`}>{day.getDate()}</div></th>))}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {productionStaff.map(member => (
-              <tr key={member.id}>
+              <tr key={member.id} className="hover:bg-slate-50/30 transition-colors">
                 <td className="p-6 border-r border-slate-100">
                   <div className="flex items-center gap-3">
                     <div className={`w-10 h-10 rounded-xl ${getEmployeeColor(member.name)} text-white flex items-center justify-center font-black`}>{member.name.charAt(0)}</div>
@@ -62,7 +64,7 @@ const Schedule: React.FC<ScheduleProps> = ({ staff, currentUser, shifts, onToggl
                   const isWorking = shifts[member.id]?.[dateKey];
                   return (
                     <td key={dateKey} className="p-2 text-center">
-                      <button onClick={() => onToggleShift(member.id, dateKey)} className={`w-full h-12 rounded-2xl flex items-center justify-center border-2 ${isWorking ? 'bg-emerald-50 border-emerald-500 text-emerald-600' : 'bg-slate-50 border-transparent text-slate-300'}`}>{isWorking ? <Check size={20} /> : <X size={16} />}</button>
+                      <button onClick={() => onToggleShift(member.id, dateKey)} className={`w-full h-12 rounded-2xl flex items-center justify-center border-2 transition-all ${isWorking ? 'bg-emerald-50 border-emerald-500 text-emerald-600' : 'bg-slate-50 border-transparent text-slate-300 hover:border-slate-200'}`}>{isWorking ? <Check size={20} /> : <X size={16} />}</button>
                     </td>
                   );
                 })}
@@ -70,7 +72,7 @@ const Schedule: React.FC<ScheduleProps> = ({ staff, currentUser, shifts, onToggl
             ))}
           </tbody>
         </table>
-        {productionStaff.length === 0 && <div className="py-20 text-center text-slate-400 font-bold uppercase text-[10px]">Нет сотрудников со статусом «В цеху»</div>}
+        {productionStaff.length === 0 && <div className="py-20 text-center text-slate-400 font-bold uppercase text-[10px] tracking-widest opacity-30 italic">Список сотрудников пуст</div>}
       </div>
     </div>
   );

@@ -173,11 +173,12 @@ const Planning: React.FC<PlanningProps> = ({ orders, onAddOrder, onSyncBitrix, o
                       >
                         {tasks.map(task => {
                           const isC = task.status === TaskStatus.COMPLETED; 
+                          // В рамках одного заказа задачи должны отличатся по одному цвету
                           const orderColor = getEmployeeColor(task.order.id); 
                           const isOverdue = !isC && task.plannedDate && task.plannedDate < todayStr;
                           
                           return (
-                            <div key={task.id} className={`p-2.5 rounded-2xl border-2 flex flex-col h-fit min-h-[140px] shadow-sm transition-all hover:shadow-md group/card ${isC ? 'bg-emerald-50 border-emerald-300' : 'bg-white'} ${isOverdue ? 'ring-2 ring-rose-500 ring-offset-2' : ''}`} style={{ borderColor: isC ? undefined : orderColor.replace('bg-', '#') }}>
+                            <div key={task.id} className={`p-2.5 rounded-2xl border-2 flex flex-col h-fit min-h-[140px] shadow-sm transition-all hover:shadow-md group/card ${isC ? 'bg-emerald-50 border-emerald-300' : 'bg-white'} ${isOverdue ? 'ring-2 ring-rose-500 ring-offset-2' : ''}`} style={{ borderColor: isC ? undefined : orderColor.replace('bg-', '') }}>
                               <div className="flex justify-between items-start mb-2">
                                 <div className="flex flex-col">
                                   <span className={`text-[10px] font-bold leading-tight line-clamp-2 ${isC ? 'text-emerald-700' : 'text-slate-800'}`}>{task.order.clientName}</span>
@@ -216,7 +217,6 @@ const Planning: React.FC<PlanningProps> = ({ orders, onAddOrder, onSyncBitrix, o
           </div>
         </div>
       </div>
-      {/* Остальные модалки (assigneeMenu, rateMenu, etc) аналогичны */}
     </div>
   );
 };
