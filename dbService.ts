@@ -1,27 +1,37 @@
 
 import { Order, User, WorkSession, CloudConfig } from './types';
 
+// Определяем базовый URL для API (полезно для разработки)
+const API_BASE = ''; 
+
 export const dbService = {
   async checkHealth(): Promise<{ success: boolean; message: string }> {
     try {
-      const response = await fetch('/api/health');
+      const response = await fetch(`${API_BASE}/api/health`);
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        return { success: false, message: 'Ошибка БД: ' + (errData.database || response.statusText) };
+      }
       const data = await response.json();
-      if (data.status === 'ok') return { success: true, message: 'Система: Связь ОК' };
-      return { success: false, message: 'БД: ' + data.database };
-    } catch (err) {
+      return { success: true, message: 'Система: Связь ОК' };
+    } catch (err: any) {
+      console.error('ПОДРОБНОСТИ ОШИБКИ СВЯЗИ:', err);
       return { success: false, message: 'Сервер: Ожидание...' };
     }
   },
 
   async login(email: string, pass: string): Promise<{ success: boolean; user?: User; payload?: any; message?: string }> {
     try {
-      const response = await fetch('/api/login', {
+      const response = await fetch(`${API_BASE}/api/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password: pass })
       });
-      return await response.json();
-    } catch (err) {
+      const data = await response.json();
+      if (!response.ok) return { success: false, message: data.message || "Ошибка входа" };
+      return data;
+    } catch (err: any) {
+      console.error('ОШИБКА LOGIN FETCH:', err);
       return { success: false, message: "Ошибка связи с API" };
     }
   },
@@ -29,7 +39,7 @@ export const dbService = {
   async saveToCloud(config: CloudConfig, data: any) {
     if (!config.enabled) return null;
     try {
-      const response = await fetch('/api/save', {
+      const response = await fetch(`${API_BASE}/api/save`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -46,7 +56,7 @@ export const dbService = {
 
   async loadFromCloud(config: CloudConfig) {
     try {
-      const response = await fetch('/api/load', {
+      const response = await fetch(`${API_BASE}/api/load`, {
         method: 'GET',
         headers: { 
             'Authorization': `Bearer ${config.apiToken}`, 
