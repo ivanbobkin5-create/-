@@ -7,7 +7,6 @@ export const dbService = {
     
     let url = config.apiUrl.trim();
     
-    // Авто-проверка: если URL заканчивается на / или просто домен, подсказываем про api.php
     if (!url.toLowerCase().endsWith('.php')) {
       return { 
         success: false, 
@@ -26,42 +25,37 @@ export const dbService = {
         }
       });
       
+      const contentType = response.headers.get('content-type') || '';
       const text = await response.text();
       const trimmed = text.trim();
-      
-      // Логируем тип контента для отладки
-      const contentType = response.headers.get('content-type');
-      const apiHeader = response.headers.get('x-mebelplan-api');
-      console.log(`[Cloud] Status: ${response.status}, Content-Type: ${contentType}, API-Header: ${apiHeader}`);
 
-      // Если в ответе HTML, значит сервер перенаправил запрос на index.html (SPA fallback)
-      if (trimmed.toLowerCase().startsWith('<!doctype') || trimmed.includes('<html')) {
-        console.error('SERVER CONFIG ERROR: Received HTML instead of JSON.');
+      console.log(`[Cloud] Status: ${response.status}, Content-Type: ${contentType}`);
+
+      // Если вернулся HTML - значит сработал редирект SPA на index.html
+      if (contentType.includes('text/html') || trimmed.toLowerCase().startsWith('<!doctype')) {
         return { 
           success: false, 
-          message: `Сервер вернул HTML-страницу. Это значит, что файл api.php либо отсутствует по этому адресу, либо сервер перенаправляет запросы на главную. Убедитесь, что api.php загружен на хостинг.` 
+          message: 'Сервер вернул страницу сайта вместо ответа API. Проверьте, что в TimeWeb "Директория сборки" указана верно и билд успешно прошел.' 
         };
       }
 
       if (response.status === 403) {
-        return { success: false, message: '403: Неверный токен (Bearer Token)' };
+        return { success: false, message: '403: Неверный токен безопасности.' };
       }
 
       if (response.status === 404) {
-        return { success: false, message: '404: Файл api.php не найден на сервере' };
+        return { success: false, message: '404: Файл api.php не найден в папке сборки.' };
       }
 
       try {
         const data = JSON.parse(trimmed);
-        if (!response.ok) return { success: false, message: data.message || `Ошибка сервера ${response.status}` };
+        if (!response.ok) return { success: false, message: data.message || `Ошибка ${response.status}` };
         return { success: data.success, message: data.message || 'Связь с базой установлена' };
       } catch (e) {
-        console.error('JSON Parse Error:', trimmed.slice(0, 100));
-        return { success: false, message: 'Ошибка: сервер прислал некорректный ответ (не JSON)' };
+        return { success: false, message: 'Ошибка парсинга JSON. Проверьте логи сервера.' };
       }
     } catch (err: any) {
-      console.error('[Cloud] Network Error:', err);
-      return { success: false, message: 'Сетевая ошибка. Проверьте интернет или настройки CORS на сервере.' };
+      return { success: false, message: 'Сетевая ошибка при подключении к облаку.' };
     }
   },
 

@@ -12,7 +12,7 @@ export default defineConfig({
     strictPort: true
   },
   build: {
-    outDir: 'dist',
+    outDir: 'build', // Соответствует вашему скриншоту в TimeWeb
     sourcemap: false
   }
 });

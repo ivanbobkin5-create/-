@@ -1,20 +1,17 @@
+
 <IfModule mod_rewrite.c>
   RewriteEngine On
   RewriteBase /
   
-  # Отключаем перенаправление на страницу ошибок для API (чтобы не получать HTML при 404)
-  <Files "api.php">
-    ErrorDocument 404 default
-  </Files>
-
-  # 1. Если это физический файл api.php - прекращаем обработку и запускаем его
+  # 1. Если файл api.php существует, отдаем его напрямую и прекращаем поиск
+  RewriteCond %{REQUEST_FILENAME} -f
   RewriteRule ^api\.php$ - [L]
 
-  # 2. Если файл или папка реально существуют (картинки, js, css) - не трогаем
+  # 2. Если запрашивается существующий файл (картинка, скрипт), отдаем его
   RewriteCond %{REQUEST_FILENAME} -f [OR]
   RewriteCond %{REQUEST_FILENAME} -d
   RewriteRule ^ - [L]
 
-  # 3. Все остальные запросы отправляем на index.html (SPA роутинг)
+  # 3. Все остальное отправляем на index.html для работы React Router
   RewriteRule . /index.html [L]
 </IfModule>

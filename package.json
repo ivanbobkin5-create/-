@@ -6,9 +6,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "tsc && vite build && cp api.php build/ && cp .htaccess build/",
     "preview": "vite preview",
-    "start": "serve -s dist -l 3000"
+    "start": "serve -s build -l 3000"
   },
   "dependencies": {
     "react": "^19.0.0",
