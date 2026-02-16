@@ -30,10 +30,6 @@ import { Loader2, CheckCircle2, AlertCircle, X, Database } from 'lucide-react';
 const STORAGE_KEYS = {
   BITRIX_CONFIG: 'woodplan_bitrix_config',
   USER: 'woodplan_user',
-  CACHE_ORDERS: 'woodplan_cache_orders',
-  CACHE_STAFF: 'woodplan_cache_staff',
-  CACHE_SHIFTS: 'woodplan_cache_shifts',
-  CACHE_SESSIONS: 'woodplan_cache_sessions',
 };
 
 const INITIAL_BITRIX_CONFIG: BitrixConfig = {
@@ -52,8 +48,7 @@ const INITIAL_BITRIX_CONFIG: BitrixConfig = {
     enabled: true,
     apiUrl: '', 
     apiToken: 'MebelPlan_2025_Secure'
-  },
-  autoShiftEndTime: '20:00'
+  }
 };
 
 const App: React.FC = () => {
@@ -82,55 +77,40 @@ const App: React.FC = () => {
     setTimeout(() => setToast(null), 3000);
   };
 
+  // Метод сохранения данных в облако
   const syncWithCloud = useCallback(async (forcedData?: any) => {
-    if (dbStatus !== 'ready' && !forcedData) return;
+    const cloudCfg = bitrixConfig.cloud || INITIAL_BITRIX_CONFIG.cloud!;
     const dataToSave = forcedData || { orders, staff, sessions, shifts };
     
-    if (bitrixConfig.cloud?.enabled) {
-      setIsSyncing(true);
-      try {
-        await dbService.saveToCloud(bitrixConfig.cloud, dataToSave);
-      } catch (e) {
-        console.error("Sync failed:", e);
-      }
-      setIsSyncing(false);
+    setIsSyncing(true);
+    try {
+      await dbService.saveToCloud(cloudCfg, dataToSave);
+    } catch (e) {
+      console.error("Save to cloud failed", e);
     }
-    
-    localStorage.setItem(STORAGE_KEYS.CACHE_ORDERS, JSON.stringify(dataToSave.orders));
-    localStorage.setItem(STORAGE_KEYS.CACHE_STAFF, JSON.stringify(dataToSave.staff));
-    localStorage.setItem(STORAGE_KEYS.CACHE_SHIFTS, JSON.stringify(dataToSave.shifts));
-    localStorage.setItem(STORAGE_KEYS.CACHE_SESSIONS, JSON.stringify(dataToSave.sessions));
-  }, [orders, staff, sessions, shifts, bitrixConfig.cloud, dbStatus]);
+    setIsSyncing(false);
+  }, [orders, staff, sessions, shifts, bitrixConfig.cloud]);
 
+  // Загрузка данных при старте
   const initData = useCallback(async () => {
     setDbStatus('loading');
+    const cloudCfg = bitrixConfig.cloud || INITIAL_BITRIX_CONFIG.cloud!;
     
     try {
-      const cloudCfg = bitrixConfig.cloud?.enabled ? bitrixConfig.cloud : INITIAL_BITRIX_CONFIG.cloud!;
       const cloudData = await dbService.loadFromCloud(cloudCfg);
-      
       if (cloudData) {
         setOrders(cloudData.orders || []);
         setStaff(cloudData.staff || []);
         setSessions(cloudData.sessions || []);
         setShifts(cloudData.shifts || {});
-        setDbStatus('ready');
-        console.log("Cloud data loaded. Staff count:", cloudData.staff?.length);
-        return;
+        console.log("Данные успешно подтянуты из PostgreSQL TimeWeb");
+      } else {
+        console.log("База данных в облаке пуста (первый запуск)");
       }
+      setDbStatus('ready');
     } catch (e) {
-      console.error("Cloud load error:", e);
-    }
-
-    const localStaff = JSON.parse(localStorage.getItem(STORAGE_KEYS.CACHE_STAFF) || '[]');
-    if (localStaff.length > 0) {
-      setOrders(JSON.parse(localStorage.getItem(STORAGE_KEYS.CACHE_ORDERS) || '[]'));
-      setStaff(localStaff);
-      setShifts(JSON.parse(localStorage.getItem(STORAGE_KEYS.CACHE_SHIFTS) || '{}'));
-      setSessions(JSON.parse(localStorage.getItem(STORAGE_KEYS.CACHE_SESSIONS) || '[]'));
-      setDbStatus('ready');
-    } else {
-      setDbStatus('ready');
+      console.error("Ошибка при загрузке из облака", e);
+      setDbStatus('error');
     }
   }, [bitrixConfig.cloud]);
 
@@ -138,12 +118,13 @@ const App: React.FC = () => {
     initData();
   }, [initData]);
 
+  // Авто-синхронизация каждые 30 секунд, если пользователь залогинен
   useEffect(() => {
     if (dbStatus === 'ready' && user) {
-      const timer = setTimeout(() => { syncWithCloud(); }, 4000);
-      return () => clearTimeout(timer);
+      const interval = setInterval(() => { syncWithCloud(); }, 30000);
+      return () => clearInterval(interval);
     }
-  }, [orders, staff, shifts, sessions, syncWithCloud, dbStatus, user]);
+  }, [user, dbStatus, syncWithCloud]);
 
   const updateTaskStatus = useCallback((orderId: string, taskId: string, status: TaskStatus | 'RESUME', comment?: string) => {
     setOrders(prev => prev.map(o => {
@@ -164,35 +145,6 @@ const App: React.FC = () => {
     }));
   }, []);
 
-  const handleSyncBitrix = useCallback(async () => {
-    setIsSyncing(true);
-    try {
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      showToast("Заказы из Bitrix24 обновлены");
-      return 0;
-    } catch (e) {
-      showToast("Ошибка связи с B24", "error");
-      return 0;
-    } finally {
-      setIsSyncing(false);
-    }
-  }, []);
-
-  const handleSyncStaff = useCallback(async () => {
-    setIsSyncing(true);
-    try {
-      // Здесь должна быть логика импорта из B24. Пока заглушка.
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      showToast("Сотрудники загружены");
-      return 0;
-    } catch (e) {
-      showToast("Ошибка загрузки", "error");
-      return 0;
-    } finally {
-      setIsSyncing(false);
-    }
-  }, []);
-
   if (dbStatus === 'loading') {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center space-y-6 text-center">
@@ -200,8 +152,21 @@ const App: React.FC = () => {
         <div className="space-y-2">
           <h2 className="text-white font-black uppercase text-sm tracking-widest">МебельПлан</h2>
           <p className="text-slate-500 text-[10px] uppercase tracking-[0.3em] flex items-center justify-center gap-2">
-            <Database size={12}/> Подключение к базе TimeWeb...
+            <Database size={12}/> Подключение к базе TimeWeb Cloud...
           </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (dbStatus === 'error') {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center space-y-6 text-center p-10">
+        <AlertCircle size={48} className="text-rose-500" />
+        <div className="space-y-4">
+          <h2 className="text-white font-bold text-xl uppercase tracking-widest">Ошибка связи с БД</h2>
+          <p className="text-slate-500 text-sm max-w-md mx-auto">Не удалось установить соединение с сервером базы данных PostgreSQL на TimeWeb. Проверьте статус сервера в панели управления.</p>
+          <button onClick={() => window.location.reload()} className="px-6 py-3 bg-blue-600 text-white rounded-xl font-bold uppercase text-xs">Повторить попытку</button>
         </div>
       </div>
     );
@@ -211,13 +176,15 @@ const App: React.FC = () => {
     return <LoginPage 
       onLogin={(role, email, pass) => {
         const found = staff.find(s => s.email?.toLowerCase() === email?.toLowerCase());
-        if (found && found.password === pass) { 
-          setUser(found); 
-          localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(found)); 
+        if (found) {
+          if (found.password === pass) {
+            setUser(found); 
+            localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(found)); 
+          } else {
+            return "Неверный пароль.";
+          }
         } else {
-          return staff.length === 0 
-            ? "База данных еще не загружена или пуста. Пожалуйста, обновите страницу."
-            : "Неверный e-mail или пароль. Обратитесь к администратору для получения доступа.";
+          return "Пользователь с таким e-mail не найден в базе вашей компании.";
         }
       }} 
       onRegister={(name, email, pass) => {
@@ -229,8 +196,8 @@ const App: React.FC = () => {
         setStaff(updatedStaff); 
         setUser(u); 
         localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(u));
-        // Принудительная синхронизация сразу после регистрации
-        syncWithCloud({ orders, staff: updatedStaff, sessions, shifts });
+        // Принудительно сохраняем в облако ПРЯМО СЕЙЧАС
+        syncWithCloud({ orders: [], staff: updatedStaff, sessions: [], shifts: {} });
       }} 
     />;
   }
@@ -242,7 +209,7 @@ const App: React.FC = () => {
         <header className="h-16 bg-white border-b border-slate-200 px-8 flex items-center justify-between shadow-sm z-30">
           <h1 className="text-xl font-bold uppercase text-slate-800 tracking-tight">{NAVIGATION_ITEMS.find(i => i.id === currentPage)?.label}</h1>
           <div className="flex items-center gap-6">
-            {isSyncing && <div className="text-[9px] font-black text-blue-500 animate-pulse uppercase flex items-center gap-1"><Database size={10}/> Обмен данными...</div>}
+            {isSyncing && <div className="text-[9px] font-black text-blue-500 animate-pulse uppercase flex items-center gap-1"><Database size={10}/> Обмен с TimeWeb Cloud...</div>}
             <div className="flex items-center gap-3">
               <div className="text-right"><div className="text-sm font-semibold">{user.name}</div><div className="text-[10px] text-slate-400 font-bold uppercase">{user.role}</div></div>
               <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center font-bold text-blue-600 border-2 border-white">{user.name.charAt(0)}</div>
@@ -255,24 +222,50 @@ const App: React.FC = () => {
           {currentPage === 'planning' && (
             <Planning 
               orders={orders} 
-              onAddOrder={o => setOrders(prev => [...prev, o])} 
-              onSyncBitrix={handleSyncBitrix} 
-              onUpdateTaskPlanning={(oid, tid, d, uid, aids) => setOrders(prev => prev.map(o => o.id !== oid ? o : { ...o, tasks: o.tasks.map(t => t.id === tid ? { ...t, plannedDate: d, assignedTo: uid, accompliceIds: aids || [] } : t) }))} 
-              onUpdateTaskRate={(oid, tid, r) => setOrders(prev => prev.map(o => o.id !== oid ? o : { ...o, tasks: o.tasks.map(t => t.id === tid ? { ...t, rate: r } : t) }))} 
+              onAddOrder={o => { setOrders(prev => [...prev, o]); syncWithCloud(); }} 
+              onSyncBitrix={async () => 0} 
+              onUpdateTaskPlanning={(oid, tid, d, uid, aids) => {
+                const updated = orders.map(o => o.id !== oid ? o : { ...o, tasks: o.tasks.map(t => t.id === tid ? { ...t, plannedDate: d, assignedTo: uid, accompliceIds: aids || [] } : t) });
+                setOrders(updated);
+                syncWithCloud({ orders: updated, staff, sessions, shifts });
+              }} 
+              onUpdateTaskRate={(oid, tid, r) => {
+                const updated = orders.map(o => o.id !== oid ? o : { ...o, tasks: o.tasks.map(t => t.id === tid ? { ...t, rate: r } : t) });
+                setOrders(updated);
+                syncWithCloud({ orders: updated, staff, sessions, shifts });
+              }} 
               isBitrixEnabled={bitrixConfig.enabled} staff={staff} shifts={shifts} 
             />
           )}
-          {currentPage === 'schedule' && <Schedule staff={staff} currentUser={user} shifts={shifts} onToggleShift={(uid, d) => setShifts(prev => { const us = { ...(prev[uid] || {}) }; us[d] = !us[d]; return { ...prev, [uid]: us }; })} />}
-          {currentPage === 'production' && <ProductionBoard orders={orders} onUpdateTask={updateTaskStatus} onAddAccomplice={(oid, tid, uid) => setOrders(prev => prev.map(o => o.id !== oid ? o : { ...o, tasks: o.tasks.map(t => t.id !== tid ? t : { ...t, accompliceIds: [...new Set([...(t.accompliceIds || []), uid])] }) }))} onUpdateDetails={(oid, tid, d, p) => setOrders(prev => prev.map(o => o.id !== oid ? o : { ...o, tasks: o.tasks.map(t => t.id === tid ? { ...t, details: d, packages: p || t.packages } : t) }))} staff={staff} currentUser={user} onAddB24Comment={async () => {}} isShiftActive={true} shifts={shifts} onTriggerShiftFlash={() => {}} />}
+          {currentPage === 'schedule' && <Schedule staff={staff} currentUser={user} shifts={shifts} onToggleShift={(uid, d) => {
+            const updatedShifts = { ...shifts };
+            if (!updatedShifts[uid]) updatedShifts[uid] = {};
+            updatedShifts[uid][d] = !updatedShifts[uid][d];
+            setShifts(updatedShifts);
+            syncWithCloud({ orders, staff, sessions, shifts: updatedShifts });
+          }} />}
+          {currentPage === 'production' && <ProductionBoard orders={orders} onUpdateTask={(oid, tid, st, comm) => { updateTaskStatus(oid, tid, st, comm); syncWithCloud(); }} onAddAccomplice={(oid, tid, uid) => {
+            const updated = orders.map(o => o.id !== oid ? o : { ...o, tasks: o.tasks.map(t => t.id !== tid ? t : { ...t, accompliceIds: [...new Set([...(t.accompliceIds || []), uid])] }) });
+            setOrders(updated);
+            syncWithCloud({ orders: updated, staff, sessions, shifts });
+          }} onUpdateDetails={(oid, tid, d, p) => {
+            const updated = orders.map(o => o.id !== oid ? o : { ...o, tasks: o.tasks.map(t => t.id === tid ? { ...t, details: d, packages: p || t.packages } : t) });
+            setOrders(updated);
+            syncWithCloud({ orders: updated, staff, sessions, shifts });
+          }} staff={staff} currentUser={user} onAddB24Comment={async () => {}} isShiftActive={true} shifts={shifts} onTriggerShiftFlash={() => {}} />}
           {currentPage === 'salaries' && <Salaries orders={orders} staff={staff} />}
-          {currentPage === 'users' && <UsersManagement staff={staff} onSync={handleSyncStaff} isBitrixEnabled={bitrixConfig.enabled} onToggleProduction={uid => setStaff(prev => prev.map(u => u.id === uid ? { ...u, isProduction: !u.isProduction } : u))} onUpdateStaff={(uid, upd) => {
-            const updatedStaff = staff.map(u => u.id === uid ? { ...u, ...upd } : u);
-            setStaff(updatedStaff);
-            syncWithCloud({ orders, staff: updatedStaff, sessions, shifts });
+          {currentPage === 'users' && <UsersManagement staff={staff} onSync={async () => 0} isBitrixEnabled={bitrixConfig.enabled} onToggleProduction={uid => {
+            const updated = staff.map(u => u.id === uid ? { ...u, isProduction: !u.isProduction } : u);
+            setStaff(updated);
+            syncWithCloud({ orders, staff: updated, sessions, shifts });
+          }} onUpdateStaff={(uid, upd) => {
+            const updated = staff.map(u => u.id === uid ? { ...u, ...upd } : u);
+            setStaff(updated);
+            syncWithCloud({ orders, staff: updated, sessions, shifts });
           }} />}
           {currentPage === 'reports' && <Reports orders={orders} staff={staff} workSessions={sessions} />}
           {currentPage === 'archive' && <Archive orders={orders} />}
-          {currentPage === 'settings' && <Settings config={bitrixConfig} setConfig={setBitrixConfig} onExport={() => {}} onImport={() => {}} onClear={() => {}} />}
+          {currentPage === 'settings' && <Settings config={bitrixConfig} setConfig={c => { setBitrixConfig(c); localStorage.setItem(STORAGE_KEYS.BITRIX_CONFIG, JSON.stringify(c)); }} onExport={() => {}} onImport={() => {}} onClear={() => {}} />}
         </div>
       </main>
 
