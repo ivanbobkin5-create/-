@@ -1,124 +1,45 @@
 <?php
-/**
- * CLOUD API FOR MEBELPLAN ERP (v2.8)
- * Глобальный отладчик и обработчик соединений
+/** 
+ * TEST FILE FOR MEBELPLAN 
+ * Если вы видите этот текст в браузере, значит PHP НЕ ИСПОЛНЯЕТСЯ.
  */
-
-// 1. Настройка максимально подробного лога ошибок (внутреннего)
-error_reporting(E_ALL);
-ini_set('display_errors', 0); // Не выводить в текст, чтобы не ломать JSON
-
-// Заголовки CORS
 header("Access-Control-Allow-Origin: *");
-header("Access-Control-Allow-Methods: GET, POST, OPTIONS");
-header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With");
-header('Content-Type: application/json; charset=utf-8');
+header('Content-Type: application/json');
 
-if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
-    http_response_code(200);
-    exit(0);
+// Простейший тест без зависимостей
+if (isset($_GET['ping'])) {
+    echo json_encode(["success" => true, "message" => "PHP_WORKS"]);
+    exit;
 }
 
-// 2. Функция экстренного завершения (ловит Fatal Errors)
-register_shutdown_function(function() {
-    $error = error_get_last();
-    if ($error !== NULL && ($error['type'] === E_ERROR || $error['type'] === E_PARSE || $error['type'] === E_CORE_ERROR || $error['type'] === E_COMPILE_ERROR)) {
-        while (ob_get_level()) ob_end_clean();
-        http_response_code(500);
-        echo json_encode([
-            'success' => false,
-            'message' => 'Критическая ошибка PHP: ' . $error['message'],
-            'file' => $error['file'],
-            'line' => $error['line']
-        ], JSON_UNESCAPED_UNICODE);
-    }
-});
-
-// Запускаем буфер
-ob_start();
-
+// Если дошли сюда, значит пробуем основную логику
 $db_config = [
     'host'     => '9f0f9288b234fa7e684a9441.twc1.net',
     'port'     => '5432',
     'dbname'   => 'default_db',
     'user'     => 'gen_user',
     'pass'     => 'I;L6fAhV|SjsWE',
-    'ssl_cert' => 'https://st.timeweb.com/cloud-static/ca.crt',
     'token'    => 'MebelPlan_2025_Secure'
 ];
 
-function sendJson($data, $code = 200) {
-    while (ob_get_level()) {
-        ob_end_clean();
-    }
-    http_response_code($code);
-    echo json_encode($data, JSON_UNESCAPED_UNICODE);
+$headers = array_change_key_case(getallheaders(), CASE_LOWER);
+$auth = $headers['authorization'] ?? '';
+
+if ($auth !== "Bearer " . $db_config['token']) {
+    http_response_code(403);
+    echo json_encode(["success" => false, "message" => "Token error"]);
     exit;
 }
 
-// 3. Проверка авторизации
-$headers = array_change_key_case(getallheaders(), CASE_LOWER);
-$auth = $headers['authorization'] ?? null;
-if ($auth !== "Bearer " . $db_config['token']) {
-    sendJson(['success' => false, 'message' => 'Ошибка доступа: неверный токен API'], 403);
-}
-
-// 4. Проверка модулей
-if (!extension_loaded('pdo')) {
-    sendJson(['success' => false, 'message' => 'Ошибка сервера: Модуль PDO не установлен'], 500);
-}
 if (!extension_loaded('pdo_pgsql')) {
-    sendJson(['success' => false, 'message' => 'Ошибка сервера: Модуль pdo_pgsql не активен. Включите его в панели TimeWeb (PHP Extensions).'], 500);
+    echo json_encode(["success" => false, "message" => "MISSING_PDO_PGSQL"]);
+    exit;
 }
 
 try {
-    $cert_path = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'tw_ca_root.crt';
-    if (!file_exists($cert_path) || filesize($cert_path) === 0) {
-        $cert_data = @file_get_contents($db_config['ssl_cert']);
-        if ($cert_data) @file_put_contents($cert_path, $cert_data);
-    }
-
-    $has_cert = file_exists($cert_path) && filesize($cert_path) > 0;
-    $ssl_mode = $has_cert ? "verify-full" : "require";
-    
-    $dsn = "pgsql:host={$db_config['host']};port={$db_config['port']};dbname={$db_config['dbname']};sslmode={$ssl_mode}";
-    if ($has_cert) {
-        $dsn .= ";sslrootcert={$cert_path}";
-    }
-    
-    $pdo = new PDO($dsn, $db_config['user'], $db_config['pass'], [
-        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_TIMEOUT => 5
-    ]);
-
-    $action = $_GET['action'] ?? '';
-
-    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-        $input = json_decode(file_get_contents('php://input'), true);
-        if ($input && isset($input['action']) && $input['action'] === 'save') {
-            $pdo->exec("CREATE TABLE IF NOT EXISTS woodplan_data (id INT PRIMARY KEY, content TEXT, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)");
-            $payload = json_encode($input['payload'], JSON_UNESCAPED_UNICODE);
-            $stmt = $pdo->prepare("INSERT INTO woodplan_data (id, content) VALUES (1, :content) ON CONFLICT (id) DO UPDATE SET content = EXCLUDED.content, updated_at = CURRENT_TIMESTAMP");
-            $stmt->execute(['content' => $payload]);
-            sendJson(['success' => true, 'message' => 'Данные успешно сохранены в облачную БД']);
-        }
-    } else {
-        if ($action === 'test') {
-            sendJson([
-                'success' => true, 
-                'message' => 'Соединение с PostgreSQL успешно установлено!',
-                'info' => ['ssl' => $ssl_mode, 'cert' => $has_cert]
-            ]);
-        } elseif ($action === 'load') {
-            $stmt = $pdo->query("SELECT content FROM woodplan_data WHERE id = 1");
-            $row = $stmt->fetch(PDO::FETCH_ASSOC);
-            sendJson(['success' => true, 'payload' => $row ? json_decode($row['content'], true) : null]);
-        } else {
-            sendJson(['success' => false, 'message' => 'Неизвестное действие'], 404);
-        }
-    }
-} catch (PDOException $e) {
-    sendJson(['success' => false, 'message' => 'Ошибка БД: ' . $e->getMessage()], 500);
+    $dsn = "pgsql:host={$db_config['host']};port={$db_config['port']};dbname={$db_config['dbname']}";
+    $pdo = new PDO($dsn, $db_config['user'], $db_config['pass'], [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+    echo json_encode(["success" => true, "message" => "DB_CONNECTED"]);
 } catch (Exception $e) {
-    sendJson(['success' => false, 'message' => 'Ошибка системы: ' . $e->getMessage()], 500);
+    echo json_encode(["success" => false, "message" => "DB_ERROR: " . $e->getMessage()]);
 }

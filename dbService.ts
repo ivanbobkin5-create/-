@@ -6,60 +6,53 @@ export const dbService = {
     
     let url = config.apiUrl.trim();
     
-    if (!url.toLowerCase().endsWith('.php')) {
-      return { 
-        success: false, 
-        message: 'Ошибка: URL должен заканчиваться на /api.php.' 
-      };
-    }
-
     try {
+      // 1. Пинг-тест: проверяем, работает ли интерпретатор PHP
+      const pingRes = await fetch(`${url}?ping=1`, { cache: 'no-cache' });
+      const pingText = await pingRes.text();
+      
+      if (pingText.includes('<?php') || pingText.includes('TEST FILE FOR MEBELPLAN')) {
+        return { 
+          success: false, 
+          message: 'КРИТИЧЕСКАЯ ОШИБКА: Сервер не исполняет PHP, а отдает его как текст. В TimeWeb Cloud Apps нужно использовать другой тип приложения или Node.js API.' 
+        };
+      }
+
+      if (!pingText && pingRes.status === 200) {
+        return {
+          success: false,
+          message: 'Пустой ответ. Вероятно, сервер TimeWeb Cloud блокирует PHP-файлы в статическом окружении.'
+        };
+      }
+
+      // 2. Основной тест
       const response = await fetch(`${url}?action=test`, {
         method: 'GET',
         headers: { 
           'Authorization': `Bearer ${config.apiToken}`,
-          'Accept': 'application/json',
-          'Cache-Control': 'no-cache'
+          'Accept': 'application/json'
         }
       });
       
-      const contentType = response.headers.get('content-type') || '';
       const text = await response.text();
-      const trimmed = text.trim();
-
-      // Если ответ пустой
-      if (!trimmed && response.status === 200) {
-        return { success: false, message: 'Сервер вернул пустой ответ (HTTP 200). Возможно, api.php пуст или заблокирован.' };
-      }
-
-      if (!trimmed && response.status >= 500) {
-        return { success: false, message: `Ошибка сервера (${response.status}). Скрипт api.php не смог запуститься.` };
-      }
-
-      // Проверка на HTML
-      if (contentType.includes('text/html') || trimmed.toLowerCase().startsWith('<!doctype') || trimmed.toLowerCase().startsWith('<html')) {
-        return { 
-          success: false, 
-          message: 'Получена HTML страница. Скорее всего, путь к api.php неверен или сработал редирект.' 
-        };
-      }
-
       try {
-        const data = JSON.parse(trimmed);
-        return { success: data.success, message: data.message || 'Статус не определен' };
+        const data = JSON.parse(text);
+        if (data.message === 'MISSING_PDO_PGSQL') {
+          return { success: false, message: 'На сервере не установлен модуль pdo_pgsql. Напишите в поддержку TimeWeb Cloud.' };
+        }
+        return { success: data.success, message: data.message || 'Связь установлена' };
       } catch (e) {
-        const snippet = trimmed.substring(0, 100).replace(/<[^>]*>?/gm, '');
         return { 
           success: false, 
-          message: `Ошибка JSON. Ответ сервера (${response.status}): "${snippet || 'пусто'}..."` 
+          message: `Ошибка JSON (${response.status}). Ответ: "${text.substring(0, 50)}..."` 
         };
       }
     } catch (err: any) {
-      return { success: false, message: 'Сетевая ошибка. Проверьте CORS или URL.' };
+      return { success: false, message: 'Сетевая ошибка. Проверьте URL.' };
     }
   },
 
-  async saveToCloud(config: CloudConfig, data: { orders: Order[], staff: User[], sessions: WorkSession[], shifts: any }) {
+  async saveToCloud(config: CloudConfig, data: any) {
     if (!config.enabled || !config.apiUrl) return null;
     try {
       const response = await fetch(config.apiUrl, {
