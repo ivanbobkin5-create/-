@@ -96,8 +96,6 @@ const App: React.FC = () => {
       const autoCloseTime = new Date(startTime);
       autoCloseTime.setHours(autoH, autoM, 0, 0);
 
-      // Если сейчас позже времени автозакрытия в день начала смены
-      // ИЛИ если уже наступил другой день
       const isPastAutoClose = now > autoCloseTime;
       const isDifferentDay = now.toDateString() !== startTime.toDateString();
 
@@ -108,20 +106,12 @@ const App: React.FC = () => {
       return session;
     });
 
-    if (hasChanges) {
-      setSessions(updatedSessions);
-    }
+    if (hasChanges) setSessions(updatedSessions);
   }, [sessions, bitrixConfig.autoShiftEndTime]);
 
-  useEffect(() => {
-    if (dbStatus === 'ready') {
-      checkAutoCloseSessions();
-      const interval = setInterval(checkAutoCloseSessions, 1000 * 60 * 15);
-      return () => clearInterval(interval);
-    }
-  }, [dbStatus, checkAutoCloseSessions]);
-
   const initData = useCallback(async () => {
+    setDbStatus('loading');
+    // Всегда пробуем загрузить из облака в первую очередь
     if (bitrixConfig.cloud?.enabled) {
       try {
         const cloudData = await dbService.loadFromCloud(bitrixConfig.cloud);
@@ -133,8 +123,11 @@ const App: React.FC = () => {
           setDbStatus('ready');
           return;
         }
-      } catch (e) {}
+      } catch (e) {
+        console.error("Cloud load failed", e);
+      }
     }
+    // Если облако недоступно, берем локальный кеш
     setOrders(JSON.parse(localStorage.getItem(STORAGE_KEYS.CACHE_ORDERS) || '[]'));
     setStaff(JSON.parse(localStorage.getItem(STORAGE_KEYS.CACHE_STAFF) || '[]'));
     setShifts(JSON.parse(localStorage.getItem(STORAGE_KEYS.CACHE_SHIFTS) || '{}'));
@@ -142,7 +135,7 @@ const App: React.FC = () => {
     setDbStatus('ready');
   }, [bitrixConfig.cloud]);
 
-  useEffect(() => { initData(); }, [initData]);
+  useEffect(() => { initData(); }, []);
 
   const syncWithCloud = useCallback(async () => {
     if (dbStatus !== 'ready') return;
@@ -150,18 +143,20 @@ const App: React.FC = () => {
       setIsSyncing(true);
       await dbService.saveToCloud(bitrixConfig.cloud, { orders, staff, sessions, shifts });
       setIsSyncing(false);
-    } else {
-      localStorage.setItem(STORAGE_KEYS.CACHE_ORDERS, JSON.stringify(orders));
-      localStorage.setItem(STORAGE_KEYS.CACHE_STAFF, JSON.stringify(staff));
-      localStorage.setItem(STORAGE_KEYS.CACHE_SHIFTS, JSON.stringify(shifts));
-      localStorage.setItem(STORAGE_KEYS.CACHE_SESSIONS, JSON.stringify(sessions));
     }
+    // Дублируем в локалсторидж для надежности
+    localStorage.setItem(STORAGE_KEYS.CACHE_ORDERS, JSON.stringify(orders));
+    localStorage.setItem(STORAGE_KEYS.CACHE_STAFF, JSON.stringify(staff));
+    localStorage.setItem(STORAGE_KEYS.CACHE_SHIFTS, JSON.stringify(shifts));
+    localStorage.setItem(STORAGE_KEYS.CACHE_SESSIONS, JSON.stringify(sessions));
   }, [orders, staff, sessions, shifts, bitrixConfig.cloud, dbStatus]);
 
   useEffect(() => {
-    const timer = setTimeout(() => { syncWithCloud(); }, 2000);
-    return () => clearTimeout(timer);
-  }, [orders, staff, shifts, sessions, syncWithCloud]);
+    if (dbStatus === 'ready') {
+      const timer = setTimeout(() => { syncWithCloud(); }, 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [orders, staff, shifts, sessions, syncWithCloud, dbStatus]);
 
   const handleSyncBitrix = async () => {
     if (!bitrixConfig.webhookUrl) { showToast("Укажите Webhook URL", "error"); return 0; }
@@ -205,7 +200,6 @@ const App: React.FC = () => {
     setIsSyncing(true);
     try {
       const baseUrl = bitrixConfig.webhookUrl.replace(/\/$/, '');
-      // Запрашиваем всех пользователей без фильтра в теле (иногда фильтр игнорируется API)
       const response = await fetch(`${baseUrl}/user.get.json`);
       const data = await response.json();
       const b24Users = data.result || [];
@@ -214,11 +208,9 @@ const App: React.FC = () => {
       const newStaff = [...staff];
       
       b24Users.forEach((u: any) => {
-        // Проверяем активность пользователя. 'Y' или true означает работающего.
         const isActive = u.ACTIVE === true || u.ACTIVE === 'Y';
         if (!isActive) return;
 
-        // Ключ уникальности: ID из Bitrix или Email
         const b24Id = `U-B24-${u.ID}`;
         const isDuplicate = newStaff.some(s => 
           s.id === b24Id || 
@@ -277,11 +269,8 @@ const App: React.FC = () => {
     }
   };
 
-  const pageTitle = useMemo(() => {
-    return NAVIGATION_ITEMS.find(item => item.id === currentPage)?.label || currentPage;
-  }, [currentPage]);
-
-  if (dbStatus === 'loading') return <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center space-y-6"><Loader2 size={48} className="text-blue-500 animate-spin" /><div className="text-center"><h2 className="text-white font-black uppercase text-sm">МебельПлан</h2></div></div>;
+  if (dbStatus === 'loading') return <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center space-y-6"><Loader2 size={48} className="text-blue-500 animate-spin" /><div className="text-center"><h2 className="text-white font-black uppercase text-sm">МебельПлан</h2><p className="text-slate-500 text-xs mt-2 uppercase tracking-widest">Загрузка данных из облака...</p></div></div>;
+  
   if (!user) return <LoginPage onLogin={(role, email, pass) => {
     const found = staff.find(s => s.email?.toLowerCase() === email?.toLowerCase());
     if (found && found.password === pass) { setUser(found); localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(found)); }
@@ -296,9 +285,9 @@ const App: React.FC = () => {
       <Sidebar currentPage={currentPage} onPageChange={setCurrentPage} onLogout={() => { setUser(null); localStorage.removeItem(STORAGE_KEYS.USER); }} user={user} bitrixConfig={bitrixConfig} />
       <main className="flex-1 flex flex-col min-w-0">
         <header className="h-16 bg-white border-b border-slate-200 px-8 flex items-center justify-between shadow-sm z-30">
-          <h1 className="text-xl font-bold uppercase text-slate-800 tracking-tight">{pageTitle}</h1>
+          <h1 className="text-xl font-bold uppercase text-slate-800 tracking-tight">{NAVIGATION_ITEMS.find(i => i.id === currentPage)?.label}</h1>
           <div className="flex items-center gap-6">
-            {isSyncing && <div className="text-[9px] font-black text-blue-500 animate-pulse uppercase">Синхронизация...</div>}
+            {isSyncing && <div className="text-[9px] font-black text-blue-500 animate-pulse uppercase">Синхронизация БД...</div>}
             <button onClick={toggleWorkSession} className={`px-4 py-2 rounded-xl text-xs font-black uppercase transition-all shadow-lg ${sessions.some(s => s.userId === user.id && !s.endTime) ? 'bg-rose-50 text-rose-600' : 'bg-blue-600 text-white'}`}>
               {sessions.some(s => s.userId === user.id && !s.endTime) ? 'Закончить смену' : 'Начать смену'}
             </button>
@@ -319,7 +308,7 @@ const App: React.FC = () => {
               onUpdateTaskPlanning={(oid, tid, d, uid, aids) => setOrders(prev => prev.map(o => o.id !== oid ? o : { ...o, tasks: o.tasks.map(t => t.id === tid ? { ...t, plannedDate: d, assignedTo: uid, accompliceIds: aids || [] } : t) }))} 
               onUpdateTaskRate={(oid, tid, r) => setOrders(prev => prev.map(o => o.id !== oid ? o : { ...o, tasks: o.tasks.map(t => t.id === tid ? { ...t, rate: r } : t) }))} 
               isBitrixEnabled={bitrixConfig.enabled} 
-              staff={staff.filter(s => s.isProduction)} 
+              staff={staff} 
               shifts={shifts} 
             />
           )}
