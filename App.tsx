@@ -87,8 +87,9 @@ const App: React.FC = () => {
     setIsSyncing(false);
   }, [orders, staff, sessions, shifts, bitrixConfig.cloud]);
 
-  // Загрузка данных при входе/старте
-  const initData = useCallback(async () => {
+  // Загружаем данные только если юзер залогинен и массивы пусты
+  const loadDataIfLoggedIn = useCallback(async () => {
+    if (!user) return;
     setDbStatus('loading');
     const cloudCfg = bitrixConfig.cloud || INITIAL_BITRIX_CONFIG.cloud!;
     try {
@@ -101,14 +102,17 @@ const App: React.FC = () => {
       }
       setDbStatus('ready');
     } catch (e) {
-      setDbStatus('ready'); // Все равно пускаем к логину
+      setDbStatus('ready');
     }
-  }, [bitrixConfig.cloud]);
+  }, [user, bitrixConfig.cloud]);
 
   useEffect(() => {
-    if (user) initData();
-    else setDbStatus('ready');
-  }, [user, initData]);
+    if (user && orders.length === 0) {
+      loadDataIfLoggedIn();
+    } else {
+      setDbStatus('ready');
+    }
+  }, [user, loadDataIfLoggedIn]);
 
   const updateTaskStatus = useCallback((orderId: string, taskId: string, status: TaskStatus | 'RESUME', comment?: string) => {
     setOrders(prev => prev.map(o => {
@@ -129,14 +133,14 @@ const App: React.FC = () => {
     }));
   }, []);
 
-  if (dbStatus === 'loading') {
+  if (dbStatus === 'loading' && user) {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center space-y-6">
         <Loader2 size={48} className="text-blue-500 animate-spin" />
         <div className="text-center">
           <h2 className="text-white font-black uppercase text-sm tracking-widest">МебельПлан</h2>
           <p className="text-slate-500 text-[10px] mt-2 uppercase tracking-[0.3em] flex items-center justify-center gap-2">
-            <Database size={12}/> Синхронизация...
+            <Database size={12}/> Загрузка данных предприятия...
           </p>
         </div>
       </div>
@@ -147,11 +151,8 @@ const App: React.FC = () => {
     return <LoginPage 
       onLogin={async (role, email, pass) => {
         if (!email || !pass) return "Введите e-mail и пароль";
-        
         const result = await dbService.login(email, pass);
-        
         if (result.success && result.user) {
-          // Если логин успешен, сразу ставим все данные из ответа сервера
           const data = result.payload;
           if (data) {
             setOrders(data.orders || []);
@@ -175,14 +176,14 @@ const App: React.FC = () => {
         setStaff(updatedStaff); 
         setUser(u); 
         localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(u));
-        await dbService.saveToCloud(bitrixConfig.cloud!, { orders: [], staff: updatedStaff, sessions: [], shifts: {} });
+        await dbService.saveToCloud(INITIAL_BITRIX_CONFIG.cloud!, { orders: [], staff: updatedStaff, sessions: [], shifts: {} });
       }} 
     />;
   }
 
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden text-slate-900">
-      <Sidebar currentPage={currentPage} onPageChange={setCurrentPage} onLogout={() => { setUser(null); localStorage.removeItem(STORAGE_KEYS.USER); }} user={user} bitrixConfig={bitrixConfig} />
+      <Sidebar currentPage={currentPage} onPageChange={setCurrentPage} onLogout={() => { setUser(null); localStorage.removeItem(STORAGE_KEYS.USER); setOrders([]); }} user={user} bitrixConfig={bitrixConfig} />
       <main className="flex-1 flex flex-col min-w-0">
         <header className="h-16 bg-white border-b border-slate-200 px-8 flex items-center justify-between shadow-sm z-30">
           <h1 className="text-xl font-bold uppercase text-slate-800 tracking-tight">{NAVIGATION_ITEMS.find(i => i.id === currentPage)?.label}</h1>

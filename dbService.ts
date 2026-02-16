@@ -2,6 +2,17 @@
 import { Order, User, WorkSession, CloudConfig } from './types';
 
 export const dbService = {
+  async checkHealth(): Promise<{ success: boolean; message: string }> {
+    try {
+      const response = await fetch('/api/health', { method: 'GET' });
+      const data = await response.json();
+      if (data.status === 'ok') return { success: true, message: 'Система работает' };
+      return { success: false, message: 'Ошибка базы: ' + data.database };
+    } catch (err) {
+      return { success: false, message: 'Сервер TimeWeb недоступен' };
+    }
+  },
+
   async login(email: string, pass: string): Promise<{ success: boolean; user?: User; payload?: any; message?: string }> {
     try {
       const response = await fetch('/api/login', {
@@ -11,7 +22,7 @@ export const dbService = {
       });
       return await response.json();
     } catch (err) {
-      return { success: false, message: "Сервер недоступен" };
+      return { success: false, message: "Ошибка связи с сервером" };
     }
   },
 
@@ -29,7 +40,6 @@ export const dbService = {
       });
       return response.ok ? await response.json() : { success: false };
     } catch (err) {
-      console.error("Cloud save failed", err);
       return { success: false };
     }
   },
@@ -51,26 +61,7 @@ export const dbService = {
     }
   },
 
-  // Fix: Added missing testConnection method used in SiteAdmin.tsx
   async testConnection(config: CloudConfig): Promise<{ success: boolean; message: string }> {
-    try {
-      const response = await fetch('/api/load', {
-        method: 'GET',
-        headers: { 
-            'Authorization': `Bearer ${config.apiToken}`, 
-            'Accept': 'application/json' 
-        }
-      });
-      
-      if (response.ok) {
-        return { success: true, message: "Соединение установлено успешно" };
-      } else if (response.status === 403) {
-        return { success: false, message: "Ошибка авторизации: неверный токен" };
-      } else {
-        return { success: false, message: `Ошибка сервера: ${response.status}` };
-      }
-    } catch (err) {
-      return { success: false, message: "Сервер облака недоступен" };
-    }
+    return this.checkHealth();
   }
 };

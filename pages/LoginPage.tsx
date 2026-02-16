@@ -1,7 +1,8 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { UserRole } from '../types';
-import { Layout, Shield, Factory, Lock, User as UserIcon, ArrowLeft, Loader2 } from 'lucide-react';
+import { Layout, Shield, Factory, Lock, User as UserIcon, ArrowLeft, Loader2, Database, AlertCircle, CheckCircle } from 'lucide-react';
+import { dbService } from '../dbService';
 
 interface LoginPageProps {
   onLogin: (role: UserRole, email?: string, password?: string) => Promise<string | void>;
@@ -17,6 +18,17 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onRegister }) => {
   const [adminPass, setAdminPass] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  
+  // Диагностика
+  const [systemHealth, setSystemHealth] = useState<{success: boolean, message: string} | null>(null);
+
+  useEffect(() => {
+    const checkStatus = async () => {
+      const health = await dbService.checkHealth();
+      setSystemHealth(health);
+    };
+    checkStatus();
+  }, []);
 
   const handleAdminAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -69,6 +81,20 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onRegister }) => {
         </div>
 
         <div className="bg-white p-8 rounded-3xl shadow-2xl border border-slate-100">
+          {/* Статус системы */}
+          <div className="mb-6 flex items-center justify-center">
+            {systemHealth ? (
+               <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest ${systemHealth.success ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+                 {systemHealth.success ? <CheckCircle size={12}/> : <AlertCircle size={12}/>}
+                 {systemHealth.message}
+               </div>
+            ) : (
+               <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-50 text-slate-400 rounded-full text-[10px] font-black uppercase">
+                 <Loader2 size={12} className="animate-spin"/> Диагностика...
+               </div>
+            )}
+          </div>
+
           {view === 'site_admin' ? (
             <div className="animate-in fade-in duration-300">
               <button 
@@ -181,7 +207,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onRegister }) => {
                 
                 {error && <p className="text-rose-600 text-[10px] font-bold text-center bg-rose-50 p-2 rounded-lg border border-rose-100">{error}</p>}
 
-                <button disabled={isLoading} className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold shadow-lg shadow-blue-500/30 hover:bg-blue-700 hover:-translate-y-0.5 transition-all flex items-center justify-center gap-2">
+                <button disabled={isLoading || (systemHealth && !systemHealth.success)} className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold shadow-lg shadow-blue-500/30 hover:bg-blue-700 hover:-translate-y-0.5 transition-all flex items-center justify-center gap-2 disabled:opacity-50">
                   {isLoading && <Loader2 size={16} className="animate-spin" />}
                   {view === 'login' ? 'Войти в систему' : 'Создать аккаунт'}
                 </button>
