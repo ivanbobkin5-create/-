@@ -24,6 +24,7 @@ import Archive from './pages/Archive';
 import LoginPage from './pages/LoginPage';
 import Settings from './pages/Settings';
 import { dbService } from './dbService';
+import { NAVIGATION_ITEMS } from './constants';
 import { Loader2, CheckCircle2, AlertCircle, X } from 'lucide-react';
 
 const STORAGE_KEYS = {
@@ -170,6 +171,9 @@ const App: React.FC = () => {
       let count = 0;
       const newStaff = [...staff];
       b24Users.forEach((u: any) => {
+        // Исключаем уволенных (ACTIVE !== 'Y')
+        if (u.ACTIVE !== 'Y') return;
+
         if (!newStaff.some(s => s.email === u.EMAIL)) {
           newStaff.push({
             id: 'U-' + Math.random().toString(36).substr(2, 9), email: u.EMAIL, name: `${u.NAME} ${u.LAST_NAME}`,
@@ -180,7 +184,7 @@ const App: React.FC = () => {
       });
       if (count > 0) setStaff(newStaff);
       setIsSyncing(false);
-      showToast(`Добавлено ${count} сотрудников`);
+      showToast(`Добавлено ${count} активных сотрудников`);
       return count;
     } catch (e) { setIsSyncing(false); return 0; }
   };
@@ -211,6 +215,10 @@ const App: React.FC = () => {
     }
   };
 
+  const pageTitle = useMemo(() => {
+    return NAVIGATION_ITEMS.find(item => item.id === currentPage)?.label || currentPage;
+  }, [currentPage]);
+
   if (dbStatus === 'loading') return <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center space-y-6"><Loader2 size={48} className="text-blue-500 animate-spin" /><div className="text-center"><h2 className="text-white font-black uppercase text-sm">МебельПлан</h2></div></div>;
   if (!user) return <LoginPage onLogin={(role, email, pass) => {
     const found = staff.find(s => s.email?.toLowerCase() === email?.toLowerCase());
@@ -226,7 +234,7 @@ const App: React.FC = () => {
       <Sidebar currentPage={currentPage} onPageChange={setCurrentPage} onLogout={() => { setUser(null); localStorage.removeItem(STORAGE_KEYS.USER); }} user={user} bitrixConfig={bitrixConfig} />
       <main className="flex-1 flex flex-col min-w-0">
         <header className="h-16 bg-white border-b border-slate-200 px-8 flex items-center justify-between shadow-sm z-30">
-          <h1 className="text-xl font-bold uppercase text-slate-800">{currentPage}</h1>
+          <h1 className="text-xl font-bold uppercase text-slate-800 tracking-tight">{pageTitle}</h1>
           <div className="flex items-center gap-6">
             {isSyncing && <div className="text-[9px] font-black text-blue-500 animate-pulse uppercase">Синхронизация...</div>}
             <button onClick={toggleWorkSession} className={`px-4 py-2 rounded-xl text-xs font-black uppercase transition-all shadow-lg ${sessions.some(s => s.userId === user.id && !s.endTime) ? 'bg-rose-50 text-rose-600' : 'bg-blue-600 text-white'}`}>
@@ -255,6 +263,9 @@ const App: React.FC = () => {
           )}
           {currentPage === 'schedule' && <Schedule staff={staff} currentUser={user} shifts={shifts} onToggleShift={(uid, d) => setShifts(prev => { const us = { ...(prev[uid] || {}) }; us[d] = !us[d]; return { ...prev, [uid]: us }; })} />}
           {currentPage === 'production' && <ProductionBoard orders={orders} onUpdateTask={updateTaskStatus} onAddAccomplice={(oid, tid, uid) => setOrders(prev => prev.map(o => o.id !== oid ? o : { ...o, tasks: o.tasks.map(t => t.id !== tid ? t : { ...t, accompliceIds: [...new Set([...(t.accompliceIds || []), uid])] }) }))} onUpdateDetails={(oid, tid, d, p) => setOrders(prev => prev.map(o => o.id !== oid ? o : { ...o, tasks: o.tasks.map(t => t.id === tid ? { ...t, details: d, packages: p || t.packages } : t) }))} staff={staff} currentUser={user} onAddB24Comment={async () => {}} isShiftActive={!!sessions.find(s => s.userId === user.id && !s.endTime)} shifts={shifts} onTriggerShiftFlash={() => showToast("Начните смену!", "error")} />}
+          {currentPage === 'reports' && <Reports orders={orders} staff={staff} workSessions={sessions} />}
+          {currentPage === 'salaries' && <Salaries orders={orders} staff={staff} />}
+          {currentPage === 'archive' && <Archive orders={orders} />}
           {currentPage === 'users' && <UsersManagement staff={staff} onSync={handleSyncStaff} isBitrixEnabled={bitrixConfig.enabled} onToggleProduction={uid => setStaff(prev => prev.map(u => u.id === uid ? { ...u, isProduction: !u.isProduction } : u))} onUpdateStaff={(uid, upd) => setStaff(prev => prev.map(u => u.id === uid ? { ...u, ...upd } : u))} />}
           {currentPage === 'settings' && <Settings config={bitrixConfig} setConfig={setBitrixConfig} onExport={() => {}} onImport={() => {}} onClear={() => {}} />}
         </div>

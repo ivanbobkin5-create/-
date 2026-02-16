@@ -89,7 +89,7 @@ const Planning: React.FC<PlanningProps> = ({ orders, onAddOrder, onSyncBitrix, o
       STAGE_SEQUENCE.forEach(stage => groups[stage] = { label: STAGE_CONFIG[stage].label, icon: STAGE_CONFIG[stage].icon, tasks: list.filter(t => t.stage === stage) });
     } else {
       list.forEach(item => {
-        if (!groups[item.order.id]) groups[item.order.id] = { label: `${item.order.orderNumber} — ${item.order.clientName}`, icon: <Factory size={16} />, tasks: [] };
+        if (!groups[item.order.id]) groups[item.order.id] = { label: `${item.order.clientName}`, icon: <Factory size={16} />, tasks: [] };
         groups[item.order.id].tasks.push(item);
       });
     }
@@ -99,12 +99,21 @@ const Planning: React.FC<PlanningProps> = ({ orders, onAddOrder, onSyncBitrix, o
   const scheduledTasks = useMemo(() => {
     const weekMap: Record<string, Record<ProductionStage, (Task & { order: Order })[]>> = {};
     weekDays.forEach(day => {
-      const key = formatDateKey(day); weekMap[key] = {} as any;
-      STAGE_SEQUENCE.forEach(stage => weekMap[key][stage] = []);
+      const key = formatDateKey(day); 
+      weekMap[key] = {
+        [ProductionStage.SAWING]: [],
+        [ProductionStage.EDGE_BANDING]: [],
+        [ProductionStage.DRILLING]: [],
+        [ProductionStage.KIT_ASSEMBLY]: [],
+        [ProductionStage.PACKAGING]: [],
+        [ProductionStage.SHIPMENT]: []
+      };
     });
     orders.forEach(order => {
       order.tasks.forEach(task => {
-        if (task.plannedDate && weekMap[task.plannedDate]) weekMap[task.plannedDate][task.stage].push({ ...task, order });
+        if (task.plannedDate && weekMap[task.plannedDate]) {
+          weekMap[task.plannedDate][task.stage].push({ ...task, order });
+        }
       });
     });
     return weekMap;
@@ -159,7 +168,6 @@ const Planning: React.FC<PlanningProps> = ({ orders, onAddOrder, onSyncBitrix, o
                 <div className="pl-2 space-y-2 animate-in slide-in-from-top-1">
                   {group.tasks.map((task: any) => (
                     <div key={task.id} onClick={() => setSelectedTaskId(selectedTaskId?.taskId === task.id ? null : { orderId: task.order.id, taskId: task.id })} className={`p-3 rounded-2xl border cursor-pointer transition-all ${selectedTaskId?.taskId === task.id ? 'bg-blue-600 border-blue-600 text-white shadow-lg' : 'bg-white border-slate-100'}`}>
-                      <div className="flex justify-between items-start mb-1"><span className={`text-[8px] font-black px-1 rounded uppercase ${selectedTaskId?.taskId === task.id ? 'bg-blue-500' : 'bg-slate-100 text-slate-500'}`}>{groupingMode === 'stage' ? task.order.orderNumber : STAGE_CONFIG[task.stage].label}</span></div>
                       <div className="font-bold text-xs truncate">{groupingMode === 'stage' ? task.order.clientName : (task.title || 'Без описания')}</div>
                     </div>
                   ))}
@@ -182,9 +190,9 @@ const Planning: React.FC<PlanningProps> = ({ orders, onAddOrder, onSyncBitrix, o
         <div className="flex-1 bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden flex flex-col relative">
           <div className="flex border-b border-slate-100 bg-slate-50/50 sticky top-0 z-20 shrink-0">
             <div className="w-40 p-4 border-r border-slate-100 flex items-center justify-center text-[10px] font-black text-slate-400 uppercase tracking-wider">Участки</div>
-            <div className="flex-1 grid grid-cols-7">
+            <div className="flex-1 grid grid-cols-7 divide-x divide-slate-100">
               {weekDays.map(day => (
-                <div key={day.toString()} className="p-4 border-r border-slate-100 last:border-r-0 text-center">
+                <div key={day.toString()} className="p-4 text-center">
                   <div className="text-[10px] font-black uppercase text-slate-400">{day.toLocaleDateString('ru-RU', { weekday: 'short' })}</div>
                   <div className={`text-xl font-black ${formatDateKey(day) === todayStr ? 'text-blue-600' : 'text-slate-800'}`}>{day.getDate()}</div>
                 </div>
@@ -193,30 +201,58 @@ const Planning: React.FC<PlanningProps> = ({ orders, onAddOrder, onSyncBitrix, o
           </div>
           <div className="flex-1 overflow-y-auto custom-scrollbar">
             {STAGE_SEQUENCE.map(stage => (
-              <div key={stage} className="flex border-b border-slate-100 min-h-[140px]">
+              <div key={stage} className="flex border-b border-slate-100 min-h-[160px]">
                 <div className="w-40 bg-slate-50/30 p-4 border-r border-slate-100 flex flex-col items-center justify-center gap-2 shrink-0">
                   <div className={`p-2 rounded-xl text-white shadow-sm ${STAGE_CONFIG[stage].color}`}>{STAGE_CONFIG[stage].icon}</div>
-                  <div className="text-[11px] font-black text-slate-700 text-center uppercase">{STAGE_CONFIG[stage].label}</div>
+                  <div className="text-[11px] font-black text-slate-700 text-center uppercase leading-tight">{STAGE_CONFIG[stage].label}</div>
                 </div>
-                <div className="flex-1 grid grid-cols-7">
+                <div className="flex-1 grid grid-cols-7 divide-x divide-slate-100 h-full">
                   {weekDays.map(day => {
-                    const dk = formatDateKey(day); const tasks = scheduledTasks[dk][stage];
-                    const canAssign = selectedTaskId && orders.find(o => o.id === selectedTaskId.orderId)?.tasks.find(t => t.id === selectedTaskId.taskId)?.stage === stage;
+                    const dk = formatDateKey(day); 
+                    const tasks = scheduledTasks[dk]?.[stage] || [];
+                    const canAssign = !!(selectedTaskId && orders.find(o => o.id === selectedTaskId.orderId)?.tasks.find(t => t.id === selectedTaskId.taskId)?.stage === stage);
+                    
                     return (
-                      <div key={dk} onClick={() => canAssign && onUpdateTaskPlanning(selectedTaskId.orderId, selectedTaskId.taskId, dk, undefined, [])} className={`flex-1 p-2 border-r border-slate-100 relative group/cell flex flex-col gap-2 ${canAssign ? 'bg-emerald-50/30 cursor-pointer ring-2 ring-inset ring-emerald-500/20' : ''}`}>
+                      <div 
+                        key={dk} 
+                        onClick={() => {
+                          if (canAssign && selectedTaskId) {
+                            onUpdateTaskPlanning(selectedTaskId.orderId, selectedTaskId.taskId, dk, undefined, []);
+                          }
+                        }} 
+                        className={`flex-1 p-2 relative group/cell flex flex-col gap-2 min-h-full ${canAssign ? 'bg-emerald-50/40 cursor-pointer ring-2 ring-inset ring-emerald-500/20 z-10' : ''}`}
+                      >
                         {tasks.map(task => {
-                          const isC = task.status === TaskStatus.COMPLETED; const ms = staff.find(s => s.id === task.assignedTo);
+                          const isC = task.status === TaskStatus.COMPLETED; 
+                          const ms = staff.find(s => s.id === task.assignedTo);
+                          const accompliceList = (task.accompliceIds || []).map(id => staff.find(s => s.id === id)).filter(Boolean);
+                          
                           return (
-                            <div key={task.id} className={`p-2 rounded-xl border flex flex-col h-fit min-h-[120px] shadow-sm ${isC ? 'bg-emerald-50 border-emerald-500' : 'bg-white border-slate-200'}`}>
-                              <div className="flex justify-between items-start mb-1"><span className={`text-[8px] font-black px-1 rounded uppercase ${isC ? 'bg-emerald-600 text-white' : 'bg-blue-50 text-blue-600'}`}>{task.order.orderNumber}</span><button onClick={e => { e.stopPropagation(); onUpdateTaskPlanning(task.order.id, task.id, undefined, undefined, []); }} className="p-1 text-slate-300 hover:text-rose-500"><X size={10} /></button></div>
-                              <div className="text-[10px] font-bold leading-tight mb-2 line-clamp-2">{task.order.clientName}</div>
-                              <div className="mt-auto space-y-1">
-                                <button onClick={e => { e.stopPropagation(); setAssigneeMenu({ orderId: task.order.id, taskId: task.id, type: 'main', date: dk }); }} className={`w-full flex items-center gap-1.5 p-1 rounded-lg border text-[8px] font-bold uppercase ${task.assignedTo ? `${getEmployeeColor(ms?.name || '')} text-white` : 'bg-slate-50 text-slate-400 hover:border-blue-300'}`}>
-                                  <UserIcon size={10} /> <span className="truncate">{ms ? ms.name.split(' ')[0] : 'Назначить'}</span>
-                                </button>
-                                <div className="flex items-center justify-between px-0.5">
-                                   <button onClick={e => { e.stopPropagation(); setAssigneeMenu({ orderId: task.order.id, taskId: task.id, type: 'support', date: dk }); }} className="text-[8px] font-black text-slate-300 hover:text-blue-500 flex items-center gap-1"><UserPlus size={10}/> {(task.accompliceIds?.length || 0) > 0 ? `+${task.accompliceIds?.length}` : 'КТУ'}</button>
-                                   <div onClick={e => { e.stopPropagation(); setRateMenu({ orderId: task.order.id, taskId: task.id, currentRate: task.rate || 0 }); setTempRate(String(task.rate || '')); }} className="text-[8px] font-black text-slate-300 hover:text-amber-500 cursor-pointer">{task.rate ? `${task.rate} ₽` : '+ Ставка'}</div>
+                            <div key={task.id} className={`p-2.5 rounded-2xl border flex flex-col h-fit min-h-[140px] shadow-sm transition-all hover:shadow-md hover:border-blue-200 group/card ${isC ? 'bg-emerald-50 border-emerald-300' : 'bg-white border-slate-200'}`}>
+                              <div className="flex justify-between items-start mb-2">
+                                <span className={`text-[10px] font-bold leading-tight line-clamp-2 ${isC ? 'text-emerald-700' : 'text-slate-800'}`}>{task.order.clientName}</span>
+                                <button onClick={e => { e.stopPropagation(); onUpdateTaskPlanning(task.order.id, task.id, undefined, undefined, []); }} className="p-1 text-slate-300 hover:text-rose-500 shrink-0"><X size={10} /></button>
+                              </div>
+                              <div className="mt-auto space-y-2">
+                                <div className="space-y-1">
+                                  <button onClick={e => { e.stopPropagation(); setAssigneeMenu({ orderId: task.order.id, taskId: task.id, type: 'main', date: dk }); }} className={`w-full flex items-center gap-1.5 p-1 rounded-lg border text-[8px] font-black uppercase transition-colors ${task.assignedTo ? `${getEmployeeColor(ms?.name || '')} text-white border-transparent` : 'bg-slate-50 text-slate-400 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200'}`}>
+                                    <UserIcon size={10} /> <span className="truncate">{ms ? ms.name.split(' ')[0] : 'Исполнитель'}</span>
+                                  </button>
+                                  <div className="flex flex-wrap gap-0.5">
+                                    {accompliceList.map(acc => (
+                                       <div key={acc?.id} className={`px-1.5 py-0.5 rounded text-[7px] font-bold text-white uppercase ${getEmployeeColor(acc?.name || '')} flex items-center gap-1`}>
+                                          {acc?.name.split(' ')[0]}
+                                       </div>
+                                    ))}
+                                    <button onClick={e => { e.stopPropagation(); setAssigneeMenu({ orderId: task.order.id, taskId: task.id, type: 'support', date: dk }); }} className="p-1 rounded bg-slate-100 text-slate-400 hover:bg-blue-100 hover:text-blue-600 border border-slate-200 transition-colors">
+                                       <UserPlus size={10}/>
+                                    </button>
+                                  </div>
+                                </div>
+                                <div className="flex items-center justify-between pt-1 border-t border-slate-100">
+                                   <div onClick={e => { e.stopPropagation(); setRateMenu({ orderId: task.order.id, taskId: task.id, currentRate: task.rate || 0 }); setTempRate(String(task.rate || '')); }} className={`text-[9px] font-black px-1.5 py-0.5 rounded cursor-pointer transition-all ${task.rate ? 'bg-amber-100 text-amber-600 border border-amber-200' : 'text-slate-300 hover:text-amber-500'}`}>
+                                      {task.rate ? `${task.rate} ₽` : '+ Ставка'}
+                                   </div>
                                 </div>
                               </div>
                             </div>
@@ -265,20 +301,33 @@ const Planning: React.FC<PlanningProps> = ({ orders, onAddOrder, onSyncBitrix, o
 
       {assigneeMenu && (
         <div className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setAssigneeMenu(null)}>
-           <div className="bg-white rounded-3xl w-64 shadow-2xl border border-slate-200 p-2" onClick={e => e.stopPropagation()}>
-              <div className="px-4 py-2 text-[9px] font-black text-slate-400 uppercase border-b border-slate-50 bg-slate-50/50">{assigneeMenu.type === 'main' ? 'Главный мастер' : 'Помощники (КТУ)'}</div>
-              <div className="max-h-60 overflow-y-auto custom-scrollbar">
-                 {assigneeMenu.type === 'main' && <button onClick={() => handleAssigneeSelect(assigneeMenu.orderId, assigneeMenu.taskId, undefined)} className="w-full px-4 py-3 text-left text-xs font-bold text-rose-500 hover:bg-rose-50 flex items-center gap-2"><X size={14}/> Сбросить</button>}
-                 {staff.filter(s => s.isProduction && shifts[s.id]?.[assigneeMenu.date || '']).map(m => (
-                    <button key={m.id} onClick={() => handleAssigneeSelect(assigneeMenu.orderId, assigneeMenu.taskId, m.id)} className="w-full px-4 py-3 text-left hover:bg-slate-50 flex items-center justify-between group">
-                       <div className="flex items-center gap-3">
-                          <div className={`w-8 h-8 rounded-lg ${getEmployeeColor(m.name)} text-white flex items-center justify-center font-black text-[10px]`}>{m.name.charAt(0)}</div>
-                          <span className="text-xs font-bold text-slate-700">{m.name}</span>
-                       </div>
-                       {(assigneeMenu.type === 'main' ? orders.find(o => o.id === assigneeMenu.orderId)?.tasks.find(t => t.id === assigneeMenu.taskId)?.assignedTo === m.id : orders.find(o => o.id === assigneeMenu.orderId)?.tasks.find(t => t.id === assigneeMenu.taskId)?.accompliceIds?.includes(m.id)) && <Check size={14} className="text-blue-500" />}
-                    </button>
-                 ))}
-                 {staff.filter(s => s.isProduction && shifts[s.id]?.[assigneeMenu.date || '']).length === 0 && <div className="p-4 text-center text-[10px] text-slate-400 font-bold uppercase">Нет мастеров в смене</div>}
+           <div className="bg-white rounded-3xl w-72 shadow-2xl border border-slate-200 p-2 overflow-hidden" onClick={e => e.stopPropagation()}>
+              <div className="px-4 py-3 text-[10px] font-black text-slate-400 uppercase border-b border-slate-50 bg-slate-50/50 flex justify-between items-center">
+                <span>{assigneeMenu.type === 'main' ? 'Главный мастер' : 'Соисполнители'}</span>
+                <button onClick={() => setAssigneeMenu(null)} className="text-slate-400 hover:text-rose-500"><X size={14}/></button>
+              </div>
+              <div className="max-h-80 overflow-y-auto custom-scrollbar p-1">
+                 {assigneeMenu.type === 'main' && <button onClick={() => handleAssigneeSelect(assigneeMenu.orderId, assigneeMenu.taskId, undefined)} className="w-full px-4 py-3 text-left text-xs font-bold text-rose-500 hover:bg-rose-50 rounded-xl flex items-center gap-2 mb-1"><X size={14}/> Сбросить основного</button>}
+                 
+                 {staff.filter(s => s.isProduction).map(m => {
+                    const isWorking = shifts[m.id]?.[assigneeMenu.date || ''];
+                    const isSelected = assigneeMenu.type === 'main' 
+                      ? orders.find(o => o.id === assigneeMenu.orderId)?.tasks.find(t => t.id === assigneeMenu.taskId)?.assignedTo === m.id
+                      : orders.find(o => o.id === assigneeMenu.orderId)?.tasks.find(t => t.id === assigneeMenu.taskId)?.accompliceIds?.includes(m.id);
+                    
+                    return (
+                      <button key={m.id} onClick={() => handleAssigneeSelect(assigneeMenu.orderId, assigneeMenu.taskId, m.id)} className={`w-full px-4 py-3 text-left hover:bg-slate-50 rounded-xl flex items-center justify-between group transition-colors mb-0.5 ${!isWorking ? 'opacity-50' : ''}`}>
+                         <div className="flex items-center gap-3">
+                            <div className={`w-8 h-8 rounded-lg ${getEmployeeColor(m.name)} text-white flex items-center justify-center font-black text-[10px] shadow-sm`}>{m.name.charAt(0)}</div>
+                            <div className="flex flex-col">
+                               <span className={`text-xs font-bold ${isSelected ? 'text-blue-600' : 'text-slate-700'}`}>{m.name}</span>
+                               <span className={`text-[8px] font-black uppercase ${isWorking ? 'text-emerald-500' : 'text-slate-400'}`}>{isWorking ? 'В смене' : 'Не в смене'}</span>
+                            </div>
+                         </div>
+                         {isSelected && <Check size={16} className="text-blue-600" />}
+                      </button>
+                    );
+                 })}
               </div>
            </div>
         </div>
@@ -286,10 +335,16 @@ const Planning: React.FC<PlanningProps> = ({ orders, onAddOrder, onSyncBitrix, o
 
       {rateMenu && (
         <div className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setRateMenu(null)}>
-           <div className="bg-white rounded-3xl w-64 shadow-2xl border border-slate-200 p-6" onClick={e => e.stopPropagation()}>
-              <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">Ставка за этап (₽)</h4>
-              <input type="number" value={tempRate} onChange={e => setTempRate(e.target.value)} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold outline-none mb-4" autoFocus />
-              <button onClick={handleSaveRate} className="w-full py-3 bg-blue-600 text-white rounded-xl font-bold text-xs uppercase shadow-lg">Сохранить</button>
+           <div className="bg-white rounded-[32px] w-80 shadow-2xl border border-slate-200 p-8" onClick={e => e.stopPropagation()}>
+              <div className="flex justify-between items-center mb-6">
+                 <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-widest">Ставка за этап (₽)</h4>
+                 <button onClick={() => setRateMenu(null)} className="text-slate-300 hover:text-slate-500"><X size={18}/></button>
+              </div>
+              <div className="relative mb-6">
+                <Coins className="absolute left-4 top-1/2 -translate-y-1/2 text-amber-500" size={20} />
+                <input type="number" value={tempRate} onChange={e => setTempRate(e.target.value)} className="w-full pl-12 pr-4 py-4 bg-slate-50 border-2 border-slate-100 rounded-2xl text-lg font-black outline-none focus:border-blue-500 transition-all" autoFocus placeholder="0" />
+              </div>
+              <button onClick={handleSaveRate} className="w-full py-4 bg-blue-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl shadow-blue-900/20 active:scale-95 transition-all">Сохранить</button>
            </div>
         </div>
       )}
