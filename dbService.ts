@@ -14,7 +14,6 @@ export const dbService = {
     }
 
     try {
-      console.log(`[Cloud] Testing connection to: ${url}`);
       const response = await fetch(`${url}?action=test`, {
         method: 'GET',
         headers: { 
@@ -28,35 +27,35 @@ export const dbService = {
       const text = await response.text();
       const trimmed = text.trim();
 
-      console.log(`[Cloud] Status: ${response.status}, Content-Type: ${contentType}`);
+      // Если ответ пустой
+      if (!trimmed && response.status === 200) {
+        return { success: false, message: 'Сервер вернул пустой ответ (HTTP 200). Возможно, api.php пуст или заблокирован.' };
+      }
 
-      // 1. Проверка на HTML (редирект SPA)
-      if (contentType.includes('text/html') || trimmed.toLowerCase().startsWith('<!doctype')) {
+      if (!trimmed && response.status >= 500) {
+        return { success: false, message: `Ошибка сервера (${response.status}). Скрипт api.php не смог запуститься.` };
+      }
+
+      // Проверка на HTML
+      if (contentType.includes('text/html') || trimmed.toLowerCase().startsWith('<!doctype') || trimmed.toLowerCase().startsWith('<html')) {
         return { 
           success: false, 
-          message: 'Сервер вернул HTML-страницу вместо API. Проверьте правильность ссылки и деплой.' 
+          message: 'Получена HTML страница. Скорее всего, путь к api.php неверен или сработал редирект.' 
         };
       }
 
-      if (response.status === 403) {
-        return { success: false, message: '403: Неверный токен (Bearer Token) в api.php.' };
-      }
-
-      // 2. Попытка распарсить JSON
       try {
         const data = JSON.parse(trimmed);
-        if (!response.ok) return { success: false, message: data.message || `Ошибка сервера ${response.status}` };
-        return { success: data.success, message: data.message || 'Связь установлена' };
+        return { success: data.success, message: data.message || 'Статус не определен' };
       } catch (e) {
-        // Если это не JSON, выводим кусок ответа для диагностики
-        const debugSnippet = trimmed.substring(0, 100).replace(/<[^>]*>?/gm, '');
+        const snippet = trimmed.substring(0, 100).replace(/<[^>]*>?/gm, '');
         return { 
           success: false, 
-          message: `Ошибка JSON. Сервер ответил: "${debugSnippet}..."` 
+          message: `Ошибка JSON. Ответ сервера (${response.status}): "${snippet || 'пусто'}..."` 
         };
       }
     } catch (err: any) {
-      return { success: false, message: 'Сетевая ошибка: проверьте URL или настройки CORS.' };
+      return { success: false, message: 'Сетевая ошибка. Проверьте CORS или URL.' };
     }
   },
 

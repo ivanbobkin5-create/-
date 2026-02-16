@@ -1,12 +1,12 @@
 <?php
 /**
- * CLOUD API FOR MEBELPLAN ERP (v2.7)
- * PostgreSQL SSL Connection Utility
+ * CLOUD API FOR MEBELPLAN ERP (v2.8)
+ * Глобальный отладчик и обработчик соединений
  */
 
-// 1. Подавляем вывод ошибок в тело ответа, но разрешаем логирование
-ini_set('display_errors', 0);
+// 1. Настройка максимально подробного лога ошибок (внутреннего)
 error_reporting(E_ALL);
+ini_set('display_errors', 0); // Не выводить в текст, чтобы не ломать JSON
 
 // Заголовки CORS
 header("Access-Control-Allow-Origin: *");
@@ -19,7 +19,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     exit(0);
 }
 
-// Буферизация для чистого вывода JSON
+// 2. Функция экстренного завершения (ловит Fatal Errors)
+register_shutdown_function(function() {
+    $error = error_get_last();
+    if ($error !== NULL && ($error['type'] === E_ERROR || $error['type'] === E_PARSE || $error['type'] === E_CORE_ERROR || $error['type'] === E_COMPILE_ERROR)) {
+        while (ob_get_level()) ob_end_clean();
+        http_response_code(500);
+        echo json_encode([
+            'success' => false,
+            'message' => 'Критическая ошибка PHP: ' . $error['message'],
+            'file' => $error['file'],
+            'line' => $error['line']
+        ], JSON_UNESCAPED_UNICODE);
+    }
+});
+
+// Запускаем буфер
 ob_start();
 
 $db_config = [
@@ -41,31 +56,28 @@ function sendJson($data, $code = 200) {
     exit;
 }
 
-// 2. Проверка авторизации
+// 3. Проверка авторизации
 $headers = array_change_key_case(getallheaders(), CASE_LOWER);
 $auth = $headers['authorization'] ?? null;
 if ($auth !== "Bearer " . $db_config['token']) {
-    sendJson(['success' => false, 'message' => 'Unauthorized: Invalid Token'], 403);
+    sendJson(['success' => false, 'message' => 'Ошибка доступа: неверный токен API'], 403);
 }
 
-// 3. Проверка наличия расширения PostgreSQL
+// 4. Проверка модулей
+if (!extension_loaded('pdo')) {
+    sendJson(['success' => false, 'message' => 'Ошибка сервера: Модуль PDO не установлен'], 500);
+}
 if (!extension_loaded('pdo_pgsql')) {
-    sendJson(['success' => false, 'message' => 'PHP Error: pdo_pgsql extension is not loaded on this server.'], 500);
-}
-
-// 4. Подготовка SSL сертификата
-$cert_path = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'tw_ca_root.crt';
-if (!file_exists($cert_path) || filesize($cert_path) === 0) {
-    // Используем @, чтобы не выводить ошибку в поток, если скачивание запрещено
-    $cert_data = @file_get_contents($db_config['ssl_cert']);
-    if ($cert_data) {
-        @file_put_contents($cert_path, $cert_data);
-    }
+    sendJson(['success' => false, 'message' => 'Ошибка сервера: Модуль pdo_pgsql не активен. Включите его в панели TimeWeb (PHP Extensions).'], 500);
 }
 
 try {
-    // 5. Формирование DSN
-    // Пытаемся использовать сертификат, если он есть
+    $cert_path = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'tw_ca_root.crt';
+    if (!file_exists($cert_path) || filesize($cert_path) === 0) {
+        $cert_data = @file_get_contents($db_config['ssl_cert']);
+        if ($cert_data) @file_put_contents($cert_path, $cert_data);
+    }
+
     $has_cert = file_exists($cert_path) && filesize($cert_path) > 0;
     $ssl_mode = $has_cert ? "verify-full" : "require";
     
@@ -88,29 +100,25 @@ try {
             $payload = json_encode($input['payload'], JSON_UNESCAPED_UNICODE);
             $stmt = $pdo->prepare("INSERT INTO woodplan_data (id, content) VALUES (1, :content) ON CONFLICT (id) DO UPDATE SET content = EXCLUDED.content, updated_at = CURRENT_TIMESTAMP");
             $stmt->execute(['content' => $payload]);
-            sendJson(['success' => true, 'message' => 'Данные сохранены в Облако']);
+            sendJson(['success' => true, 'message' => 'Данные успешно сохранены в облачную БД']);
         }
     } else {
         if ($action === 'test') {
             sendJson([
                 'success' => true, 
-                'message' => 'API работает. База подключена.',
-                'debug' => [
-                    'ssl_mode' => $ssl_mode,
-                    'cert_found' => $has_cert,
-                    'php_version' => PHP_VERSION
-                ]
+                'message' => 'Соединение с PostgreSQL успешно установлено!',
+                'info' => ['ssl' => $ssl_mode, 'cert' => $has_cert]
             ]);
         } elseif ($action === 'load') {
             $stmt = $pdo->query("SELECT content FROM woodplan_data WHERE id = 1");
             $row = $stmt->fetch(PDO::FETCH_ASSOC);
             sendJson(['success' => true, 'payload' => $row ? json_decode($row['content'], true) : null]);
         } else {
-            sendJson(['success' => false, 'message' => 'Action not found'], 404);
+            sendJson(['success' => false, 'message' => 'Неизвестное действие'], 404);
         }
     }
 } catch (PDOException $e) {
     sendJson(['success' => false, 'message' => 'Ошибка БД: ' . $e->getMessage()], 500);
 } catch (Exception $e) {
-    sendJson(['success' => false, 'message' => 'Системная ошибка: ' . $e->getMessage()], 500);
+    sendJson(['success' => false, 'message' => 'Ошибка системы: ' . $e->getMessage()], 500);
 }
