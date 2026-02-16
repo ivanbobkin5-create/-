@@ -47,7 +47,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, onPageChange, onLogout, 
         </div>
       </div>
 
-      <nav className="flex-1 mt-6 px-4 overflow-y-auto custom-scrollbar">
+      <nav className="flex-1 mt-6 px-4 overflow-y-auto no-scrollbar">
         <ul className="space-y-1">
           {visibleItems.map((item) => (
             <li key={item.id}>

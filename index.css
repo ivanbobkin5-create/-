@@ -20,13 +20,22 @@
   .custom-scrollbar::-webkit-scrollbar-thumb {
     @apply bg-slate-300 rounded-full hover:bg-slate-400 transition-colors;
   }
+
+  /* Скрытие скроллбара для сайдбара */
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
 }
 
-@keyframes flash-green {
-  0%, 100% { background-color: transparent; }
-  50% { background-color: #10b981; color: white; }
+@keyframes slide-in-right {
+  0% { transform: translateX(100%); opacity: 0; }
+  100% { transform: translateX(0); opacity: 1; }
 }
 
-.animate-flash-shift {
-  animation: flash-green 0.5s ease-in-out 3;
+.animate-toast {
+  animation: slide-in-right 0.3s ease-out forwards;
 }
