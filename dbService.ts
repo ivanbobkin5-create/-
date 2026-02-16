@@ -1,4 +1,3 @@
-
 import { Order, User, WorkSession, CloudConfig } from './types';
 
 export const dbService = {
@@ -30,39 +29,34 @@ export const dbService = {
       const trimmed = text.trim();
 
       console.log(`[Cloud] Status: ${response.status}, Content-Type: ${contentType}`);
-      console.log(`[Cloud] Raw Response:`, trimmed);
 
-      // 1. Проверка на HTML (редирект на index.html)
+      // 1. Проверка на HTML (редирект SPA)
       if (contentType.includes('text/html') || trimmed.toLowerCase().startsWith('<!doctype')) {
         return { 
           success: false, 
-          message: 'Сервер вернул HTML-страницу. Проверьте правильность пути и наличие api.php в папке build.' 
+          message: 'Сервер вернул HTML-страницу вместо API. Проверьте правильность ссылки и деплой.' 
         };
       }
 
       if (response.status === 403) {
-        return { success: false, message: '403: Неверный токен доступа.' };
+        return { success: false, message: '403: Неверный токен (Bearer Token) в api.php.' };
       }
 
-      if (response.status === 404) {
-        return { success: false, message: '404: Файл api.php не найден по этому адресу.' };
-      }
-
-      // 2. Попытка парсинга с детальным выводом ошибки
+      // 2. Попытка распарсить JSON
       try {
         const data = JSON.parse(trimmed);
         if (!response.ok) return { success: false, message: data.message || `Ошибка сервера ${response.status}` };
         return { success: data.success, message: data.message || 'Связь установлена' };
       } catch (e) {
-        // Если не JSON, показываем начало текста ответа (там обычно текст ошибки PHP)
-        const snippet = trimmed.substring(0, 60).replace(/<[^>]*>?/gm, ''); // убираем теги для читаемости
+        // Если это не JSON, выводим кусок ответа для диагностики
+        const debugSnippet = trimmed.substring(0, 100).replace(/<[^>]*>?/gm, '');
         return { 
           success: false, 
-          message: `Ошибка ответа сервера. Получено: "${snippet}..."` 
+          message: `Ошибка JSON. Сервер ответил: "${debugSnippet}..."` 
         };
       }
     } catch (err: any) {
-      return { success: false, message: 'Сетевая ошибка. Проверьте CORS или интернет.' };
+      return { success: false, message: 'Сетевая ошибка: проверьте URL или настройки CORS.' };
     }
   },
 
