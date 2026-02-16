@@ -82,7 +82,6 @@ const App: React.FC = () => {
     setTimeout(() => setToast(null), 3000);
   };
 
-  // Логика автоматического завершения забытых смен
   const checkAutoCloseSessions = useCallback(() => {
     if (!bitrixConfig.autoShiftEndTime) return;
     
@@ -94,28 +93,26 @@ const App: React.FC = () => {
       if (session.endTime) return session;
 
       const startTime = new Date(session.startTime);
-      const autoCloseToday = new Date(startTime);
-      autoCloseToday.setHours(autoH, autoM, 0, 0);
+      const autoCloseTime = new Date(startTime);
+      autoCloseTime.setHours(autoH, autoM, 0, 0);
 
-      // Если сейчас позже времени автозакрытия И смена была начата до этого времени
-      // Или если смена была начата в предыдущий день
-      const isPastAutoClose = now > autoCloseToday;
+      // Если сейчас позже времени автозакрытия в день начала смены
+      // ИЛИ если уже наступил другой день
+      const isPastAutoClose = now > autoCloseTime;
       const isDifferentDay = now.toDateString() !== startTime.toDateString();
 
       if (isDifferentDay || isPastAutoClose) {
         hasChanges = true;
-        return { ...session, endTime: autoCloseToday.toISOString() };
+        return { ...session, endTime: autoCloseTime.toISOString() };
       }
       return session;
     });
 
     if (hasChanges) {
       setSessions(updatedSessions);
-      showToast("Некоторые смены были завершены автоматически", "success");
     }
   }, [sessions, bitrixConfig.autoShiftEndTime]);
 
-  // Проверка автозакрытия при загрузке и раз в 15 минут
   useEffect(() => {
     if (dbStatus === 'ready') {
       checkAutoCloseSessions();
@@ -208,8 +205,7 @@ const App: React.FC = () => {
     setIsSyncing(true);
     try {
       const baseUrl = bitrixConfig.webhookUrl.replace(/\/$/, '');
-      // Запрашиваем всех пользователей. Фильтрацию ACTIVE сделаем в коде для надежности, 
-      // так как некоторые порталы игнорируют FILTER в теле запроса.
+      // Запрашиваем всех пользователей без фильтра в теле (иногда фильтр игнорируется API)
       const response = await fetch(`${baseUrl}/user.get.json`);
       const data = await response.json();
       const b24Users = data.result || [];
@@ -218,11 +214,11 @@ const App: React.FC = () => {
       const newStaff = [...staff];
       
       b24Users.forEach((u: any) => {
-        // У Битрикса работающий - это ACTIVE === true или 'Y'. Уволенный - 'N' или false.
+        // Проверяем активность пользователя. 'Y' или true означает работающего.
         const isActive = u.ACTIVE === true || u.ACTIVE === 'Y';
         if (!isActive) return;
 
-        // Ключ уникальности: внешний ID или Email
+        // Ключ уникальности: ID из Bitrix или Email
         const b24Id = `U-B24-${u.ID}`;
         const isDuplicate = newStaff.some(s => 
           s.id === b24Id || 
