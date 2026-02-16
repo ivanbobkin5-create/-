@@ -20,17 +20,22 @@ export const dbService = {
       const text = await response.text();
       
       if (response.status === 403) {
-        return { success: false, message: `403 Forbidden: Вероятно, токен API неверный. Получено: ${text.slice(0, 50)}...` };
+        return { success: false, message: `403 Forbidden: Ошибка авторизации. Проверьте токен.` };
       }
 
       let data;
       try {
         data = JSON.parse(text);
       } catch (e) {
-        console.error('SERVER SENT NON-JSON:', text);
+        // Это КРИТИЧЕСКИЙ момент для отладки
+        console.group('ОШИБКА API (Non-JSON response)');
+        console.error('Статус:', response.status);
+        console.error('Полученный текст:', text);
+        console.groupEnd();
+        
         return { 
           success: false, 
-          message: `Ошибка JSON: Сервер вернул текст вместо данных. Посмотрите консоль (F12) для деталей.` 
+          message: `Сервер вернул текст вместо JSON. Нажмите F12 и проверьте вкладку Console.` 
         };
       }
 
@@ -41,10 +46,10 @@ export const dbService = {
       return { success: data.success, message: data.message || 'Связь установлена' };
     } catch (err: any) {
       console.error('Connection Test Failed:', err);
-      if (err.message === 'Failed to fetch') {
+      if (err.name === 'TypeError' || err.message.includes('fetch')) {
         return { 
           success: false, 
-          message: 'Сетевая ошибка (Failed to fetch). Убедитесь, что URL верный и SSL сертификат сайта исправен.' 
+          message: 'Ошибка сети (Failed to fetch). Проверьте: 1. Доступность URL. 2. Наличие https. 3. Настройки CORS на хостинге.' 
         };
       }
       return { success: false, message: err.message || 'Сетевая ошибка' };
@@ -67,8 +72,7 @@ export const dbService = {
       });
       if (!response.ok) {
         const errText = await response.text();
-        console.error('Cloud Save HTTP Error:', errText);
-        throw new Error(`Ошибка ${response.status}: ${errText.slice(0, 100)}`);
+        throw new Error(`Ошибка сервера: ${errText.slice(0, 50)}`);
       }
       return await response.json();
     } catch (err: any) {
