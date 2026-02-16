@@ -4,16 +4,12 @@ import { Order, User, WorkSession, CloudConfig } from './types';
 export const dbService = {
   async checkHealth(): Promise<{ success: boolean; message: string }> {
     try {
-      const response = await fetch('/api/health', { 
-        method: 'GET',
-        headers: { 'Accept': 'application/json' }
-      });
+      const response = await fetch('/api/health');
       const data = await response.json();
       if (data.status === 'ok') return { success: true, message: 'Система: Связь ОК' };
-      return { success: false, message: 'БД: ' + (data.database || 'неизвестная ошибка') };
+      return { success: false, message: 'БД: ' + data.database };
     } catch (err) {
-      console.error('Health check fetch failed:', err);
-      return { success: false, message: 'Сервер: Не отвечает' };
+      return { success: false, message: 'Сервер: Ожидание...' };
     }
   },
 
@@ -24,13 +20,9 @@ export const dbService = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password: pass })
       });
-      if (!response.ok) {
-        const errData = await response.json();
-        return { success: false, message: errData.message || "Ошибка сервера" };
-      }
       return await response.json();
     } catch (err) {
-      return { success: false, message: "Нет связи с API" };
+      return { success: false, message: "Ошибка связи с API" };
     }
   },
 
