@@ -29,13 +29,13 @@ const Schedule: React.FC<ScheduleProps> = ({ staff, currentUser, shifts, onToggl
 
   const formatDateKey = (date: Date) => date.toISOString().split('T')[0];
   
-  // В графике отображаем только тех, кто отмечен "В цеху"
+  // В графике отображаем ТОЛЬКО тех, кто отмечен "В цеху" в разделе Сотрудники
   const productionStaff = useMemo(() => staff.filter(s => s.isProduction), [staff]);
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
-        <div><h2 className="text-xl font-black text-slate-800 uppercase tracking-tight">График работы</h2><p className="text-sm text-slate-500">Отображаются только сотрудники «В цеху»</p></div>
+        <div><h2 className="text-xl font-black text-slate-800 uppercase tracking-tight">График работы</h2><p className="text-sm text-slate-500">Только сотрудники со статусом «В цеху»</p></div>
         <div className="flex bg-slate-50 rounded-xl border border-slate-200 p-1">
           <button onClick={() => { const d = new Date(currentDate); d.setDate(d.getDate() - 7); setCurrentDate(d); }} className="p-2 hover:bg-white rounded-lg transition-all"><ChevronLeft size={20} /></button>
           <div className="px-6 py-2 text-sm font-bold flex items-center gap-2"><CalendarDays size={16} className="text-blue-500" />{weekDays[0].toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })} — {weekDays[6].toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}</div>
@@ -72,7 +72,7 @@ const Schedule: React.FC<ScheduleProps> = ({ staff, currentUser, shifts, onToggl
             ))}
           </tbody>
         </table>
-        {productionStaff.length === 0 && <div className="py-20 text-center text-slate-400 font-bold uppercase text-[10px] tracking-widest opacity-30 italic">Список сотрудников пуст</div>}
+        {productionStaff.length === 0 && <div className="py-20 text-center text-slate-400 font-bold uppercase text-[10px] tracking-widest opacity-30 italic">Список сотрудников производства пуст</div>}
       </div>
     </div>
   );

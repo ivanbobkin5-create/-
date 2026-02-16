@@ -82,6 +82,26 @@ const App: React.FC = () => {
     setTimeout(() => setToast(null), 3000);
   };
 
+  const syncWithCloud = useCallback(async (forcedData?: any) => {
+    if (dbStatus !== 'ready' && !forcedData) return;
+    const dataToSave = forcedData || { orders, staff, sessions, shifts };
+    
+    if (bitrixConfig.cloud?.enabled) {
+      setIsSyncing(true);
+      try {
+        await dbService.saveToCloud(bitrixConfig.cloud, dataToSave);
+      } catch (e) {
+        console.error("Sync failed:", e);
+      }
+      setIsSyncing(false);
+    }
+    
+    localStorage.setItem(STORAGE_KEYS.CACHE_ORDERS, JSON.stringify(dataToSave.orders));
+    localStorage.setItem(STORAGE_KEYS.CACHE_STAFF, JSON.stringify(dataToSave.staff));
+    localStorage.setItem(STORAGE_KEYS.CACHE_SHIFTS, JSON.stringify(dataToSave.shifts));
+    localStorage.setItem(STORAGE_KEYS.CACHE_SESSIONS, JSON.stringify(dataToSave.sessions));
+  }, [orders, staff, sessions, shifts, bitrixConfig.cloud, dbStatus]);
+
   const initData = useCallback(async () => {
     setDbStatus('loading');
     
@@ -95,6 +115,7 @@ const App: React.FC = () => {
         setSessions(cloudData.sessions || []);
         setShifts(cloudData.shifts || {});
         setDbStatus('ready');
+        console.log("Cloud data loaded successfully");
         return;
       }
     } catch (e) {
@@ -117,29 +138,9 @@ const App: React.FC = () => {
     initData();
   }, [initData]);
 
-  const syncWithCloud = useCallback(async (forcedData?: any) => {
-    if (dbStatus !== 'ready' && !forcedData) return;
-    const dataToSave = forcedData || { orders, staff, sessions, shifts };
-    
-    if (bitrixConfig.cloud?.enabled) {
-      setIsSyncing(true);
-      try {
-        await dbService.saveToCloud(bitrixConfig.cloud, dataToSave);
-      } catch (e) {
-        console.error("Sync failed:", e);
-      }
-      setIsSyncing(false);
-    }
-    
-    localStorage.setItem(STORAGE_KEYS.CACHE_ORDERS, JSON.stringify(dataToSave.orders));
-    localStorage.setItem(STORAGE_KEYS.CACHE_STAFF, JSON.stringify(dataToSave.staff));
-    localStorage.setItem(STORAGE_KEYS.CACHE_SHIFTS, JSON.stringify(dataToSave.shifts));
-    localStorage.setItem(STORAGE_KEYS.CACHE_SESSIONS, JSON.stringify(dataToSave.sessions));
-  }, [orders, staff, sessions, shifts, bitrixConfig.cloud, dbStatus]);
-
   useEffect(() => {
     if (dbStatus === 'ready' && user) {
-      const timer = setTimeout(() => { syncWithCloud(); }, 3000);
+      const timer = setTimeout(() => { syncWithCloud(); }, 4000);
       return () => clearTimeout(timer);
     }
   }, [orders, staff, shifts, sessions, syncWithCloud, dbStatus, user]);
@@ -167,10 +168,10 @@ const App: React.FC = () => {
     setIsSyncing(true);
     try {
       await new Promise(resolve => setTimeout(resolve, 1000));
-      showToast("Заказы из Bitrix24 синхронизированы");
+      showToast("Заказы из Bitrix24 обновлены");
       return 0;
     } catch (e) {
-      showToast("Ошибка синхронизации заказов", "error");
+      showToast("Ошибка связи с B24", "error");
       return 0;
     } finally {
       setIsSyncing(false);
@@ -181,10 +182,10 @@ const App: React.FC = () => {
     setIsSyncing(true);
     try {
       await new Promise(resolve => setTimeout(resolve, 1000));
-      showToast("Сотрудники из Bitrix24 загружены");
+      showToast("Сотрудники загружены");
       return 0;
     } catch (e) {
-      showToast("Ошибка загрузки сотрудников", "error");
+      showToast("Ошибка загрузки", "error");
       return 0;
     } finally {
       setIsSyncing(false);
@@ -193,12 +194,12 @@ const App: React.FC = () => {
 
   if (dbStatus === 'loading') {
     return (
-      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center space-y-6">
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center space-y-6 text-center">
         <Loader2 size={48} className="text-blue-500 animate-spin" />
-        <div className="text-center">
+        <div className="space-y-2">
           <h2 className="text-white font-black uppercase text-sm tracking-widest">МебельПлан</h2>
-          <p className="text-slate-500 text-[10px] mt-2 uppercase tracking-[0.3em] flex items-center gap-2">
-            <Database size={12}/> Подключение к базе TimeWeb...
+          <p className="text-slate-500 text-[10px] uppercase tracking-[0.3em] flex items-center justify-center gap-2">
+            <Database size={12}/> Синхронизация с базой TimeWeb...
           </p>
         </div>
       </div>
@@ -214,8 +215,8 @@ const App: React.FC = () => {
           localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(found)); 
         } else {
           return staff.length === 0 
-            ? "База данных сотрудников пуста. Попробуйте зарегистрироваться или обновить страницу."
-            : "Неверный логин или пароль.";
+            ? "База данных еще не загружена или пуста. Попробуйте обновить страницу."
+            : "Неверный логин или пароль. Убедитесь, что вы используете e-mail и пароль, выданные администратором.";
         }
       }} 
       onRegister={(name, email, pass) => {
@@ -239,7 +240,7 @@ const App: React.FC = () => {
         <header className="h-16 bg-white border-b border-slate-200 px-8 flex items-center justify-between shadow-sm z-30">
           <h1 className="text-xl font-bold uppercase text-slate-800 tracking-tight">{NAVIGATION_ITEMS.find(i => i.id === currentPage)?.label}</h1>
           <div className="flex items-center gap-6">
-            {isSyncing && <div className="text-[9px] font-black text-blue-500 animate-pulse uppercase flex items-center gap-1"><Database size={10}/> Синхронизация...</div>}
+            {isSyncing && <div className="text-[9px] font-black text-blue-500 animate-pulse uppercase flex items-center gap-1"><Database size={10}/> Обмен данными...</div>}
             <div className="flex items-center gap-3">
               <div className="text-right"><div className="text-sm font-semibold">{user.name}</div><div className="text-[10px] text-slate-400 font-bold uppercase">{user.role}</div></div>
               <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center font-bold text-blue-600 border-2 border-white">{user.name.charAt(0)}</div>

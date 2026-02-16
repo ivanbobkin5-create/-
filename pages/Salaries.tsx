@@ -98,16 +98,19 @@ const Salaries: React.FC<{orders: Order[], staff: User[]}> = ({ orders, staff })
            <div className="flex bg-white p-1 rounded-xl border border-slate-200 shadow-sm">
               <div className="px-3 border-r border-slate-100 flex items-center">
                 <CalendarDays size={14} className="text-blue-500 mr-2" />
-                <select value={selectedMonth} onChange={e => setSelectedMonth(Number(e.target.value))} className="bg-transparent text-xs font-black uppercase outline-none">
+                <select value={selectedMonth} onChange={e => setSelectedMonth(Number(e.target.value))} className="bg-transparent text-xs font-black uppercase outline-none cursor-pointer">
                   {MONTHS.map((m, i) => <option key={m} value={i}>{m}</option>)}
                 </select>
               </div>
               <div className="px-3">
-                <select value={selectedYear} onChange={e => setSelectedYear(Number(e.target.value))} className="bg-transparent text-xs font-black uppercase outline-none">
+                <select value={selectedYear} onChange={e => setSelectedYear(Number(e.target.value))} className="bg-transparent text-xs font-black uppercase outline-none cursor-pointer">
                   {[2024, 2025, 2026].map(y => <option key={y} value={y}>{y}</option>)}
                 </select>
               </div>
            </div>
+           <button className="flex items-center gap-2 px-4 py-2 bg-slate-900 text-white rounded-xl text-xs font-bold hover:bg-slate-800 transition-all">
+             <Download size={14} /> Выгрузить
+           </button>
         </div>
       </div>
 
@@ -135,7 +138,7 @@ const Salaries: React.FC<{orders: Order[], staff: User[]}> = ({ orders, staff })
                         <div className="w-10 h-10 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center font-black">{stat.name.charAt(0)}</div>
                         <div>
                           <div className="font-bold text-slate-800">{stat.name}</div>
-                          {!stat.isCurrentlyProduction && <div className="text-[8px] font-black text-amber-600 uppercase">Архив (работал в {MONTHS[selectedMonth]})</div>}
+                          {!stat.isCurrentlyProduction && <div className="text-[8px] font-black text-amber-600 uppercase">Вне производства (был в {MONTHS[selectedMonth]})</div>}
                         </div>
                       </div>
                     </td>
@@ -188,7 +191,7 @@ const Salaries: React.FC<{orders: Order[], staff: User[]}> = ({ orders, staff })
                         <td className="py-4 text-xs font-medium text-slate-400">{new Date(d.date).toLocaleDateString('ru-RU')}</td>
                         <td className="py-4">
                            <div className="text-sm font-black text-slate-800">{d.client}</div>
-                           <div className="text-[9px] text-slate-400 font-bold uppercase">Заказ #{d.orderNo}</div>
+                           <div className="text-[9px] text-slate-400 font-bold uppercase tracking-tight">Заказ #{d.orderNo}</div>
                         </td>
                         <td className="py-4">
                            <div className="flex items-center gap-2">

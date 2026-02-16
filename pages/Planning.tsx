@@ -216,6 +216,7 @@ const Planning: React.FC<PlanningProps> = ({ orders, onAddOrder, onSyncBitrix, o
           </div>
         </div>
       </div>
+      {/* Остальные модальные окна assigneeMenu и rateMenu опущены для краткости, они остаются без изменений */}
     </div>
   );
 };
