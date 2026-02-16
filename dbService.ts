@@ -10,7 +10,7 @@ export const dbService = {
     if (!url.toLowerCase().endsWith('.php')) {
       return { 
         success: false, 
-        message: 'Ошибка: URL должен заканчиваться на /api.php. Добавьте его в настройках.' 
+        message: 'Ошибка: URL должен заканчиваться на /api.php.' 
       };
     }
 
@@ -30,39 +30,44 @@ export const dbService = {
       const trimmed = text.trim();
 
       console.log(`[Cloud] Status: ${response.status}, Content-Type: ${contentType}`);
+      console.log(`[Cloud] Raw Response:`, trimmed);
 
-      // Если вернулся HTML - значит сработал редирект SPA на index.html
+      // 1. Проверка на HTML (редирект на index.html)
       if (contentType.includes('text/html') || trimmed.toLowerCase().startsWith('<!doctype')) {
         return { 
           success: false, 
-          message: 'Сервер вернул страницу сайта вместо ответа API. Проверьте, что в TimeWeb "Директория сборки" указана верно и билд успешно прошел.' 
+          message: 'Сервер вернул HTML-страницу. Проверьте правильность пути и наличие api.php в папке build.' 
         };
       }
 
       if (response.status === 403) {
-        return { success: false, message: '403: Неверный токен безопасности.' };
+        return { success: false, message: '403: Неверный токен доступа.' };
       }
 
       if (response.status === 404) {
-        return { success: false, message: '404: Файл api.php не найден в папке сборки.' };
+        return { success: false, message: '404: Файл api.php не найден по этому адресу.' };
       }
 
+      // 2. Попытка парсинга с детальным выводом ошибки
       try {
         const data = JSON.parse(trimmed);
-        if (!response.ok) return { success: false, message: data.message || `Ошибка ${response.status}` };
-        return { success: data.success, message: data.message || 'Связь с базой установлена' };
+        if (!response.ok) return { success: false, message: data.message || `Ошибка сервера ${response.status}` };
+        return { success: data.success, message: data.message || 'Связь установлена' };
       } catch (e) {
-        return { success: false, message: 'Ошибка парсинга JSON. Проверьте логи сервера.' };
+        // Если не JSON, показываем начало текста ответа (там обычно текст ошибки PHP)
+        const snippet = trimmed.substring(0, 60).replace(/<[^>]*>?/gm, ''); // убираем теги для читаемости
+        return { 
+          success: false, 
+          message: `Ошибка ответа сервера. Получено: "${snippet}..."` 
+        };
       }
     } catch (err: any) {
-      return { success: false, message: 'Сетевая ошибка при подключении к облаку.' };
+      return { success: false, message: 'Сетевая ошибка. Проверьте CORS или интернет.' };
     }
   },
 
   async saveToCloud(config: CloudConfig, data: { orders: Order[], staff: User[], sessions: WorkSession[], shifts: any }) {
     if (!config.enabled || !config.apiUrl) return null;
-    if (!config.apiUrl.toLowerCase().endsWith('.php')) return null;
-    
     try {
       const response = await fetch(config.apiUrl, {
         method: 'POST',
@@ -80,8 +85,6 @@ export const dbService = {
 
   async loadFromCloud(config: CloudConfig) {
     if (!config.enabled || !config.apiUrl) return null;
-    if (!config.apiUrl.toLowerCase().endsWith('.php')) return null;
-
     try {
       const response = await fetch(`${config.apiUrl}?action=load`, {
         headers: { 'Authorization': `Bearer ${config.apiToken}`, 'Accept': 'application/json' }
