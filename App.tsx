@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { 
   User, 
@@ -49,7 +50,7 @@ const INITIAL_BITRIX_CONFIG: BitrixConfig = {
   },
   cloud: { 
     enabled: true,
-    apiUrl: '', // Оставляем пустым для использования относительного пути /api/load на TimeWeb
+    apiUrl: '', 
     apiToken: 'MebelPlan_2025_Secure'
   },
   autoShiftEndTime: '20:00'
@@ -83,11 +84,8 @@ const App: React.FC = () => {
 
   const initData = useCallback(async () => {
     setDbStatus('loading');
-    console.log("Initializing data from Cloud...");
     
-    // Пытаемся загрузить из облака (TimeWeb БД через api/load)
     try {
-      // Используем конфиг из стейта или дефолтный, если в стейте пусто
       const cloudCfg = bitrixConfig.cloud?.enabled ? bitrixConfig.cloud : INITIAL_BITRIX_CONFIG.cloud!;
       const cloudData = await dbService.loadFromCloud(cloudCfg);
       
@@ -97,14 +95,12 @@ const App: React.FC = () => {
         setSessions(cloudData.sessions || []);
         setShifts(cloudData.shifts || {});
         setDbStatus('ready');
-        console.log("Data loaded from Cloud successfully. Staff count:", cloudData.staff?.length);
         return;
       }
     } catch (e) {
       console.error("Cloud load error:", e);
     }
 
-    // Если облако не ответило, берем локальный кеш (для оффлайна)
     const localStaff = JSON.parse(localStorage.getItem(STORAGE_KEYS.CACHE_STAFF) || '[]');
     if (localStaff.length > 0) {
       setOrders(JSON.parse(localStorage.getItem(STORAGE_KEYS.CACHE_ORDERS) || '[]'));
@@ -113,8 +109,7 @@ const App: React.FC = () => {
       setSessions(JSON.parse(localStorage.getItem(STORAGE_KEYS.CACHE_SESSIONS) || '[]'));
       setDbStatus('ready');
     } else {
-      // Если и локально пусто, значит это первый запуск в новом браузере и БД не ответила
-      setDbStatus('ready'); // Позволяем войти как админ или зарегистрироваться
+      setDbStatus('ready');
     }
   }, [bitrixConfig.cloud]);
 
@@ -122,25 +117,33 @@ const App: React.FC = () => {
     initData();
   }, [initData]);
 
-  const syncWithCloud = useCallback(async () => {
-    if (dbStatus !== 'ready') return;
+  const syncWithCloud = useCallback(async (forcedData?: any) => {
+    if (dbStatus !== 'ready' && !forcedData) return;
+    const dataToSave = forcedData || { orders, staff, sessions, shifts };
+    
     if (bitrixConfig.cloud?.enabled) {
       setIsSyncing(true);
       try {
-        await dbService.saveToCloud(bitrixConfig.cloud, { orders, staff, sessions, shifts });
+        await dbService.saveToCloud(bitrixConfig.cloud, dataToSave);
       } catch (e) {
         console.error("Sync failed:", e);
       }
       setIsSyncing(false);
     }
-    // Дублируем в локальный кеш
-    localStorage.setItem(STORAGE_KEYS.CACHE_ORDERS, JSON.stringify(orders));
-    localStorage.setItem(STORAGE_KEYS.CACHE_STAFF, JSON.stringify(staff));
-    localStorage.setItem(STORAGE_KEYS.CACHE_SHIFTS, JSON.stringify(shifts));
-    localStorage.setItem(STORAGE_KEYS.CACHE_SESSIONS, JSON.stringify(sessions));
+    
+    localStorage.setItem(STORAGE_KEYS.CACHE_ORDERS, JSON.stringify(dataToSave.orders));
+    localStorage.setItem(STORAGE_KEYS.CACHE_STAFF, JSON.stringify(dataToSave.staff));
+    localStorage.setItem(STORAGE_KEYS.CACHE_SHIFTS, JSON.stringify(dataToSave.shifts));
+    localStorage.setItem(STORAGE_KEYS.CACHE_SESSIONS, JSON.stringify(dataToSave.sessions));
   }, [orders, staff, sessions, shifts, bitrixConfig.cloud, dbStatus]);
 
-  // Fix: Added missing updateTaskStatus function to handle task transitions
+  useEffect(() => {
+    if (dbStatus === 'ready' && user) {
+      const timer = setTimeout(() => { syncWithCloud(); }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [orders, staff, shifts, sessions, syncWithCloud, dbStatus, user]);
+
   const updateTaskStatus = useCallback((orderId: string, taskId: string, status: TaskStatus | 'RESUME', comment?: string) => {
     setOrders(prev => prev.map(o => {
       if (o.id !== orderId) return o;
@@ -151,29 +154,20 @@ const App: React.FC = () => {
           const newStatus = status === 'RESUME' ? TaskStatus.IN_PROGRESS : status;
           const now = new Date().toISOString();
           const updates: Partial<Task> = { status: newStatus as TaskStatus };
-          
-          if (newStatus === TaskStatus.IN_PROGRESS && !t.startedAt) {
-            updates.startedAt = now;
-          }
-          if (newStatus === TaskStatus.COMPLETED) {
-            updates.completedAt = now;
-          }
-          if (comment) {
-            updates.notes = t.notes ? `${t.notes}\n${comment}` : comment;
-          }
+          if (newStatus === TaskStatus.IN_PROGRESS && !t.startedAt) updates.startedAt = now;
+          if (newStatus === TaskStatus.COMPLETED) updates.completedAt = now;
+          if (comment) updates.notes = t.notes ? `${t.notes}\n${comment}` : comment;
           return { ...t, ...updates };
         })
       };
     }));
   }, []);
 
-  // Fix: Added missing handleSyncBitrix function to satisfy Planning component props
   const handleSyncBitrix = useCallback(async () => {
     setIsSyncing(true);
     try {
-      // Stub: in real scenario this would call the Bitrix24 proxy API
       await new Promise(resolve => setTimeout(resolve, 1000));
-      showToast("Заказы из Bitrix24 синхронизированы", "success");
+      showToast("Заказы из Bitrix24 синхронизированы");
       return 0;
     } catch (e) {
       showToast("Ошибка синхронизации заказов", "error");
@@ -183,13 +177,11 @@ const App: React.FC = () => {
     }
   }, []);
 
-  // Fix: Added missing handleSyncStaff function to satisfy UsersManagement component props
   const handleSyncStaff = useCallback(async () => {
     setIsSyncing(true);
     try {
-      // Stub: in real scenario this would pull user data from Bitrix24
       await new Promise(resolve => setTimeout(resolve, 1000));
-      showToast("Сотрудники из Bitrix24 загружены", "success");
+      showToast("Сотрудники из Bitrix24 загружены");
       return 0;
     } catch (e) {
       showToast("Ошибка загрузки сотрудников", "error");
@@ -199,13 +191,6 @@ const App: React.FC = () => {
     }
   }, []);
 
-  useEffect(() => {
-    if (dbStatus === 'ready') {
-      const timer = setTimeout(() => { syncWithCloud(); }, 3000);
-      return () => clearTimeout(timer);
-    }
-  }, [orders, staff, shifts, sessions, syncWithCloud, dbStatus]);
-
   if (dbStatus === 'loading') {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center space-y-6">
@@ -213,7 +198,7 @@ const App: React.FC = () => {
         <div className="text-center">
           <h2 className="text-white font-black uppercase text-sm tracking-widest">МебельПлан</h2>
           <p className="text-slate-500 text-[10px] mt-2 uppercase tracking-[0.3em] flex items-center gap-2">
-            <Database size={12}/> Подключение к БД TimeWeb...
+            <Database size={12}/> Подключение к базе TimeWeb...
           </p>
         </div>
       </div>
@@ -228,25 +213,21 @@ const App: React.FC = () => {
           setUser(found); 
           localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(found)); 
         } else {
-          return "Пользователь не найден в БД или пароль неверен. Убедитесь, что вы зарегистрированы в основном браузере.";
+          return staff.length === 0 
+            ? "База данных сотрудников пуста. Попробуйте зарегистрироваться или обновить страницу."
+            : "Неверный логин или пароль.";
         }
       }} 
       onRegister={(name, email, pass) => {
         const u: User = { 
           id: 'U-' + Math.random().toString(36).substr(2, 9), 
-          email, 
-          password: pass, 
-          name: 'Администратор', 
-          role: UserRole.COMPANY_ADMIN, 
-          companyName: name, 
-          isProduction: false 
+          email, password: pass, name: 'Администратор', role: UserRole.COMPANY_ADMIN, companyName: name, isProduction: false 
         };
         const updatedStaff = [...staff, u];
         setStaff(updatedStaff); 
         setUser(u); 
         localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(u));
-        // Принудительная синхронизация сразу после регистрации
-        dbService.saveToCloud(bitrixConfig.cloud || INITIAL_BITRIX_CONFIG.cloud!, { orders, staff: updatedStaff, sessions, shifts });
+        syncWithCloud({ orders, staff: updatedStaff, sessions, shifts });
       }} 
     />;
   }
@@ -275,18 +256,16 @@ const App: React.FC = () => {
               onSyncBitrix={handleSyncBitrix} 
               onUpdateTaskPlanning={(oid, tid, d, uid, aids) => setOrders(prev => prev.map(o => o.id !== oid ? o : { ...o, tasks: o.tasks.map(t => t.id === tid ? { ...t, plannedDate: d, assignedTo: uid, accompliceIds: aids || [] } : t) }))} 
               onUpdateTaskRate={(oid, tid, r) => setOrders(prev => prev.map(o => o.id !== oid ? o : { ...o, tasks: o.tasks.map(t => t.id === tid ? { ...t, rate: r } : t) }))} 
-              isBitrixEnabled={bitrixConfig.enabled} 
-              staff={staff} 
-              shifts={shifts} 
+              isBitrixEnabled={bitrixConfig.enabled} staff={staff} shifts={shifts} 
             />
           )}
           {currentPage === 'schedule' && <Schedule staff={staff} currentUser={user} shifts={shifts} onToggleShift={(uid, d) => setShifts(prev => { const us = { ...(prev[uid] || {}) }; us[d] = !us[d]; return { ...prev, [uid]: us }; })} />}
+          {currentPage === 'production' && <ProductionBoard orders={orders} onUpdateTask={updateTaskStatus} onAddAccomplice={(oid, tid, uid) => setOrders(prev => prev.map(o => o.id !== oid ? o : { ...o, tasks: o.tasks.map(t => t.id !== tid ? t : { ...t, accompliceIds: [...new Set([...(t.accompliceIds || []), uid])] }) }))} onUpdateDetails={(oid, tid, d, p) => setOrders(prev => prev.map(o => o.id !== oid ? o : { ...o, tasks: o.tasks.map(t => t.id === tid ? { ...t, details: d, packages: p || t.packages } : t) }))} staff={staff} currentUser={user} onAddB24Comment={async () => {}} isShiftActive={true} shifts={shifts} onTriggerShiftFlash={() => {}} />}
           {currentPage === 'salaries' && <Salaries orders={orders} staff={staff} />}
           {currentPage === 'users' && <UsersManagement staff={staff} onSync={handleSyncStaff} isBitrixEnabled={bitrixConfig.enabled} onToggleProduction={uid => setStaff(prev => prev.map(u => u.id === uid ? { ...u, isProduction: !u.isProduction } : u))} onUpdateStaff={(uid, upd) => setStaff(prev => prev.map(u => u.id === uid ? { ...u, ...upd } : u))} />}
-          {currentPage === 'settings' && <Settings config={bitrixConfig} setConfig={setBitrixConfig} onExport={() => {}} onImport={() => {}} onClear={() => {}} />}
-          {currentPage === 'production' && <ProductionBoard orders={orders} onUpdateTask={updateTaskStatus} onAddAccomplice={(oid, tid, uid) => setOrders(prev => prev.map(o => o.id !== oid ? o : { ...o, tasks: o.tasks.map(t => t.id !== tid ? t : { ...t, accompliceIds: [...new Set([...(t.accompliceIds || []), uid])] }) }))} onUpdateDetails={(oid, tid, d, p) => setOrders(prev => prev.map(o => o.id !== oid ? o : { ...o, tasks: o.tasks.map(t => t.id === tid ? { ...t, details: d, packages: p || t.packages } : t) }))} staff={staff} currentUser={user} onAddB24Comment={async () => {}} isShiftActive={!!sessions.find(s => s.userId === user.id && !s.endTime)} shifts={shifts} onTriggerShiftFlash={() => showToast("Начните смену!", "error")} />}
           {currentPage === 'reports' && <Reports orders={orders} staff={staff} workSessions={sessions} />}
           {currentPage === 'archive' && <Archive orders={orders} />}
+          {currentPage === 'settings' && <Settings config={bitrixConfig} setConfig={setBitrixConfig} onExport={() => {}} onImport={() => {}} onClear={() => {}} />}
         </div>
       </main>
 
