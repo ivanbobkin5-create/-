@@ -4,12 +4,16 @@ import { Order, User, WorkSession, CloudConfig } from './types';
 export const dbService = {
   async checkHealth(): Promise<{ success: boolean; message: string }> {
     try {
-      const response = await fetch('/api/health', { method: 'GET' });
+      const response = await fetch('/api/health', { 
+        method: 'GET',
+        headers: { 'Accept': 'application/json' }
+      });
       const data = await response.json();
-      if (data.status === 'ok') return { success: true, message: 'Система работает' };
-      return { success: false, message: 'Ошибка базы: ' + data.database };
+      if (data.status === 'ok') return { success: true, message: 'Система: Связь ОК' };
+      return { success: false, message: 'БД: ' + (data.database || 'неизвестная ошибка') };
     } catch (err) {
-      return { success: false, message: 'Сервер TimeWeb недоступен' };
+      console.error('Health check fetch failed:', err);
+      return { success: false, message: 'Сервер: Не отвечает' };
     }
   },
 
@@ -20,9 +24,13 @@ export const dbService = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password: pass })
       });
+      if (!response.ok) {
+        const errData = await response.json();
+        return { success: false, message: errData.message || "Ошибка сервера" };
+      }
       return await response.json();
     } catch (err) {
-      return { success: false, message: "Ошибка связи с сервером" };
+      return { success: false, message: "Нет связи с API" };
     }
   },
 

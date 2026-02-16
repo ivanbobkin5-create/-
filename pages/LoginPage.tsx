@@ -28,6 +28,9 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onRegister }) => {
       setSystemHealth(health);
     };
     checkStatus();
+    // Повторяем проверку каждые 10 секунд
+    const interval = setInterval(checkStatus, 10000);
+    return () => clearInterval(interval);
   }, []);
 
   const handleAdminAuth = async (e: React.FormEvent) => {
@@ -208,7 +211,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onRegister }) => {
                 {error && <p className="text-rose-600 text-[10px] font-bold text-center bg-rose-50 p-2 rounded-lg border border-rose-100">{error}</p>}
 
                 <button 
-                  disabled={isLoading || systemHealth?.success === false} 
+                  disabled={isLoading} 
                   className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold shadow-lg shadow-blue-500/30 hover:bg-blue-700 hover:-translate-y-0.5 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
                 >
                   {isLoading && <Loader2 size={16} className="animate-spin" />}
