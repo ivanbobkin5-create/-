@@ -20,6 +20,7 @@ import Salaries from './pages/Salaries';
 import UsersManagement from './pages/UsersManagement';
 import Archive from './pages/Archive';
 import LoginPage from './pages/LoginPage';
+import SiteAdmin from './pages/SiteAdmin';
 import Settings from './pages/Settings';
 import { dbService } from './dbService';
 import { NAVIGATION_ITEMS } from './constants';
@@ -76,24 +77,24 @@ const App: React.FC = () => {
   };
 
   const syncWithCloud = useCallback(async (forcedData?: any) => {
+    if (!user || user.role === UserRole.SITE_ADMIN) return;
     const cloudCfg = bitrixConfig.cloud || INITIAL_BITRIX_CONFIG.cloud!;
     const dataToSave = forcedData || { orders, staff, sessions, shifts };
     setIsSyncing(true);
     try {
-      await dbService.saveToCloud(cloudCfg, dataToSave);
+      await dbService.saveToCloud(cloudCfg, dataToSave, user.companyId);
     } catch (e) {
       console.error("Save to cloud failed", e);
     }
     setIsSyncing(false);
-  }, [orders, staff, sessions, shifts, bitrixConfig.cloud]);
+  }, [orders, staff, sessions, shifts, bitrixConfig.cloud, user]);
 
-  // Загружаем данные только если юзер залогинен и массивы пусты
   const loadDataIfLoggedIn = useCallback(async () => {
-    if (!user) return;
+    if (!user || user.role === UserRole.SITE_ADMIN) return;
     setDbStatus('loading');
     const cloudCfg = bitrixConfig.cloud || INITIAL_BITRIX_CONFIG.cloud!;
     try {
-      const cloudData = await dbService.loadFromCloud(cloudCfg);
+      const cloudData = await dbService.loadFromCloud(cloudCfg, user.companyId);
       if (cloudData) {
         setOrders(cloudData.orders || []);
         setStaff(cloudData.staff || []);
@@ -150,6 +151,13 @@ const App: React.FC = () => {
   if (!user) {
     return <LoginPage 
       onLogin={async (role, email, pass) => {
+        if (role === UserRole.SITE_ADMIN) {
+          const sa: User = { id: 'sa', name: 'Иван Бобкин', email: 'ivanbobkin@system.ru', role: UserRole.SITE_ADMIN, isProduction: false };
+          setUser(sa);
+          localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(sa));
+          return;
+        }
+
         if (!email || !pass) return "Введите e-mail и пароль";
         const result = await dbService.login(email, pass);
         if (result.success && result.user) {
@@ -168,18 +176,52 @@ const App: React.FC = () => {
         }
       }} 
       onRegister={async (name, email, pass) => {
+        const companyId = 'C-' + Math.random().toString(36).substr(2, 9);
         const u: User = { 
           id: 'U-' + Math.random().toString(36).substr(2, 9), 
-          email, password: pass, name: 'Администратор', role: UserRole.COMPANY_ADMIN, companyName: name, isProduction: false 
+          email, password: pass, name: 'Администратор', role: UserRole.COMPANY_ADMIN, companyName: name, companyId, isProduction: false 
         };
-        const updatedStaff = [u];
-        setStaff(updatedStaff); 
+        
+        const result = await dbService.register(u);
+        if (!result.success) return result.message || "Ошибка регистрации";
+
+        setStaff([u]); 
+        setOrders([]);
+        setSessions([]);
+        setShifts({});
         setUser(u); 
         localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(u));
-        await dbService.saveToCloud(INITIAL_BITRIX_CONFIG.cloud!, { orders: [], staff: updatedStaff, sessions: [], shifts: {} });
       }} 
     />;
   }
+
+  if (user.role === UserRole.SITE_ADMIN) {
+    const companies = Array.from(new Set(staff.filter(u => u.companyName).map(u => JSON.stringify({ id: u.companyId || u.id, name: u.companyName })))).map(s => JSON.parse(s as string));
+    
+    return <SiteAdmin 
+      onLogout={() => { setUser(null); localStorage.removeItem(STORAGE_KEYS.USER); setOrders([]); }}
+      orders={orders}
+      staff={staff}
+      companies={companies}
+      config={bitrixConfig}
+      onUpdateUser={(userId, updates) => {
+        const updated = staff.map(u => u.id === userId ? { ...u, ...updates } : u);
+        setStaff(updated);
+        syncWithCloud({ orders, staff: updated, sessions, shifts });
+      }}
+      onSendMessage={(toUserId, text) => {
+        console.log(`Sending message to ${toUserId}: ${text}`);
+      }}
+      onUpdateConfig={(config) => {
+        setBitrixConfig(config);
+        localStorage.setItem(STORAGE_KEYS.BITRIX_CONFIG, JSON.stringify(config));
+      }}
+    />;
+  }
+
+  const myOrders = orders.filter(o => o.companyId === user.companyId);
+  const myStaff = staff.filter(s => s.companyId === user.companyId);
+  const mySessions = sessions.filter(s => s.companyId === user.companyId);
 
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden text-slate-900">
@@ -197,11 +239,16 @@ const App: React.FC = () => {
         </header>
 
         <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
-          {currentPage === 'dashboard' && <Dashboard orders={orders} staff={staff} />}
+          {currentPage === 'dashboard' && <Dashboard orders={myOrders} staff={myStaff} />}
           {currentPage === 'planning' && (
             <Planning 
-              orders={orders} 
-              onAddOrder={o => { setOrders(prev => [...prev, o]); syncWithCloud(); }} 
+              orders={myOrders} 
+              onAddOrder={o => { 
+                const newOrder = { ...o, companyId: user.companyId };
+                const updatedOrders = [...orders, newOrder];
+                setOrders(updatedOrders); 
+                syncWithCloud({ orders: updatedOrders, staff, sessions, shifts }); 
+              }} 
               onSyncBitrix={async () => 0} 
               onUpdateTaskPlanning={(oid, tid, d, uid, aids) => {
                 const updated = orders.map(o => o.id !== oid ? o : { ...o, tasks: o.tasks.map(t => t.id === tid ? { ...t, plannedDate: d, assignedTo: uid, accompliceIds: aids || [] } : t) });
@@ -213,17 +260,17 @@ const App: React.FC = () => {
                 setOrders(updated);
                 syncWithCloud({ orders: updated, staff, sessions, shifts });
               }} 
-              isBitrixEnabled={bitrixConfig.enabled} staff={staff} shifts={shifts} 
+              isBitrixEnabled={bitrixConfig.enabled} staff={myStaff} shifts={shifts} 
             />
           )}
-          {currentPage === 'schedule' && <Schedule staff={staff} currentUser={user} shifts={shifts} onToggleShift={(uid, d) => {
+          {currentPage === 'schedule' && <Schedule staff={myStaff} currentUser={user} shifts={shifts} onToggleShift={(uid, d) => {
             const updatedShifts = { ...shifts };
             if (!updatedShifts[uid]) updatedShifts[uid] = {};
             updatedShifts[uid][d] = !updatedShifts[uid][d];
             setShifts(updatedShifts);
             syncWithCloud({ orders, staff, sessions, shifts: updatedShifts });
           }} />}
-          {currentPage === 'production' && <ProductionBoard orders={orders} onUpdateTask={(oid, tid, st, comm) => { updateTaskStatus(oid, tid, st, comm); syncWithCloud(); }} onAddAccomplice={(oid, tid, uid) => {
+          {currentPage === 'production' && <ProductionBoard orders={myOrders} onUpdateTask={(oid, tid, st, comm) => { updateTaskStatus(oid, tid, st, comm); syncWithCloud(); }} onAddAccomplice={(oid, tid, uid) => {
             const updated = orders.map(o => o.id !== oid ? o : { ...o, tasks: o.tasks.map(t => t.id !== tid ? t : { ...t, accompliceIds: [...new Set([...(t.accompliceIds || []), uid])] }) });
             setOrders(updated);
             syncWithCloud({ orders: updated, staff, sessions, shifts });
@@ -231,9 +278,9 @@ const App: React.FC = () => {
             const updated = orders.map(o => o.id !== oid ? o : { ...o, tasks: o.tasks.map(t => t.id === tid ? { ...t, details: d, packages: p || t.packages } : t) });
             setOrders(updated);
             syncWithCloud({ orders: updated, staff, sessions, shifts });
-          }} staff={staff} currentUser={user} onAddB24Comment={async () => {}} isShiftActive={true} shifts={shifts} onTriggerShiftFlash={() => {}} />}
-          {currentPage === 'salaries' && <Salaries orders={orders} staff={staff} />}
-          {currentPage === 'users' && <UsersManagement staff={staff} onSync={async () => 0} isBitrixEnabled={bitrixConfig.enabled} onToggleProduction={uid => {
+          }} staff={myStaff} currentUser={user} onAddB24Comment={async () => {}} isShiftActive={true} shifts={shifts} onTriggerShiftFlash={() => {}} />}
+          {currentPage === 'salaries' && <Salaries orders={myOrders} staff={myStaff} />}
+          {currentPage === 'users' && <UsersManagement staff={myStaff} onSync={async () => 0} isBitrixEnabled={bitrixConfig.enabled} onToggleProduction={uid => {
             const updated = staff.map(u => u.id === uid ? { ...u, isProduction: !u.isProduction } : u);
             setStaff(updated);
             syncWithCloud({ orders, staff: updated, sessions, shifts });
@@ -242,8 +289,8 @@ const App: React.FC = () => {
             setStaff(updated);
             syncWithCloud({ orders, staff: updated, sessions, shifts });
           }} />}
-          {currentPage === 'reports' && <Reports orders={orders} staff={staff} workSessions={sessions} />}
-          {currentPage === 'archive' && <Archive orders={orders} />}
+          {currentPage === 'reports' && <Reports orders={myOrders} staff={myStaff} workSessions={mySessions} />}
+          {currentPage === 'archive' && <Archive orders={myOrders} />}
           {currentPage === 'settings' && <Settings config={bitrixConfig} setConfig={c => { setBitrixConfig(c); localStorage.setItem(STORAGE_KEYS.BITRIX_CONFIG, JSON.stringify(c)); }} onExport={() => {}} onImport={() => {}} onClear={() => {}} />}
         </div>
       </main>

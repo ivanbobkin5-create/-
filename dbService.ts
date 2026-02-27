@@ -36,13 +36,26 @@ export const dbService = {
     }
   },
 
-  async saveToCloud(config: CloudConfig, data: any) {
+  async register(user: User): Promise<{ success: boolean; message?: string }> {
+    try {
+      const response = await fetch('/api/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user })
+      });
+      return await response.json();
+    } catch (err: any) {
+      return { success: false, message: "Ошибка сети" };
+    }
+  },
+
+  async saveToCloud(config: CloudConfig, data: any, companyId?: string) {
     if (!config.enabled) return null;
     try {
       const response = await fetch('/api/save', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ payload: data, token: config.apiToken })
+        body: JSON.stringify({ payload: data, token: config.apiToken, companyId })
       });
       return response.ok;
     } catch (err) {
@@ -50,11 +63,14 @@ export const dbService = {
     }
   },
 
-  async loadFromCloud(config: CloudConfig) {
+  async loadFromCloud(config: CloudConfig, companyId?: string) {
     try {
       const response = await fetch('/api/load', {
         method: 'GET',
-        headers: { 'Authorization': `Bearer ${config.apiToken}` }
+        headers: { 
+          'Authorization': `Bearer ${config.apiToken}`,
+          'X-Company-Id': companyId || ''
+        }
       });
       if (!response.ok) return null;
       const result = await response.json();

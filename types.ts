@@ -50,6 +50,7 @@ export interface WorkSession {
   userId: string;
   startTime: string;
   endTime?: string;
+  companyId?: string;
 }
 
 export interface User {
@@ -108,7 +109,7 @@ export interface BitrixFieldMapping {
 
 export interface Order {
   id: string;
-  companyId: string;
+  companyId?: string;
   clientName: string;
   orderNumber: string;
   deadline: string;
