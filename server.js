@@ -36,11 +36,11 @@ const getSslConfig = () => {
             ca: process.env.DB_CA_CERT.replace(/\\n/g, '\n').trim() 
         };
     }
-    // Если переменной нет, пробуем режим "доверять всем", который часто работает в облаках
-    return { rejectUnauthorized: false };
+    // Если переменной нет, отключаем SSL (так как psql строка не содержит sslmode)
+    return false;
 };
 
-const connectionString = process.env.DATABASE_URL || 'postgresql://gen_user:I%3BL6fAhV%7CSjsWE@89.223.121.2:5432/default_db';
+const connectionString = process.env.DATABASE_URL || 'postgresql://gen_user:I%3BL6fAhV%7CSjsWE@89.23.117.158:5432/default_db';
 
 const pool = new Pool({
     connectionString,
