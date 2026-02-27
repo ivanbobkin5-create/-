@@ -4,6 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import pg from 'pg';
 import cors from 'cors';
+import http from 'http';
 
 const { Pool } = pg;
 const __filename = fileURLToPath(import.meta.url);
@@ -11,66 +12,67 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-
 const SECURE_TOKEN = 'MebelPlan_2025_Secure';
 
-// Логирование запросов для отладки в Timeweb
-app.use((req, res, next) => {
-    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
-    next();
-});
+let serverPublicIP = 'Определяется...';
+
+// Функция для определения внешнего IP сервера (чтобы юзер знал, что добавлять в белый список)
+const fetchPublicIP = () => {
+  http.get('http://api.ipify.org', (res) => {
+    res.on('data', (chunk) => {
+      serverPublicIP = chunk.toString();
+      console.log(`🌍 ПУБЛИЧНЫЙ IP СЕРВЕРА: ${serverPublicIP}`);
+    });
+  }).on('error', () => {
+    serverPublicIP = 'Не удалось определить';
+  });
+};
+fetchPublicIP();
 
 const getSslConfig = () => {
     if (process.env.DB_CA_CERT) {
-        console.log('📜 SSL: Используется сертификат из ENV');
-        return { rejectUnauthorized: true, ca: process.env.DB_CA_CERT };
+        return { 
+            rejectUnauthorized: true, 
+            ca: process.env.DB_CA_CERT.replace(/\\n/g, '\n').trim() 
+        };
     }
+    // Если переменной нет, пробуем режим "доверять всем", который часто работает в облаках
     return { rejectUnauthorized: false };
 };
 
-const connectionString = process.env.DATABASE_URL || 'postgresql://gen_user:I%3BL6fAhV%7CSjsWE@9f0f9288b234fa7e684a9441.twc1.net:5432/default_db';
+const connectionString = process.env.DATABASE_URL || 'postgresql://gen_user:I%3BL6fAhV%7CSjsWE@89.223.121.2:5432/default_db';
 
 const pool = new Pool({
     connectionString,
     ssl: getSslConfig(),
-    connectionTimeoutMillis: 10000,
+    connectionTimeoutMillis: 5000,
 });
-
-pool.on('error', (err) => {
-    console.error('❌ КРИТИЧЕСКАЯ ОШИБКА БД:', err.message);
-});
-
-// Таблица создается в фоне
-const initDatabase = async () => {
-    try {
-        const client = await pool.connect();
-        await client.query(`
-            CREATE TABLE IF NOT EXISTS woodplan_data (
-                id INT PRIMARY KEY, 
-                content TEXT, 
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        `);
-        client.release();
-        console.log('✅ База данных готова к работе');
-    } catch (err) {
-        console.error('⚠️ Ошибка инициализации БД (сервер продолжит работу):', err.message);
-    }
-};
 
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
-// Проверка наличия папки build
 const buildPath = path.join(__dirname, 'build');
 app.use(express.static(buildPath));
 
-app.get('/api/health', async (req, res) => {
+app.get('/api/ping', (req, res) => {
+    res.json({ status: 'ok', ip: serverPublicIP });
+});
+
+app.get('/api/test-db', async (req, res) => {
     try {
-        const dbRes = await pool.query('SELECT 1 as ok');
-        res.json({ status: 'ok', database: 'connected', timestamp: new Date() });
+        const client = await pool.connect();
+        const dbRes = await client.query('SELECT current_database()');
+        client.release();
+        res.json({ status: 'success', serverIp: serverPublicIP });
     } catch (err) {
-        res.status(500).json({ status: 'error', database: err.message });
+        res.status(500).json({ 
+            status: 'error', 
+            message: err.message,
+            serverIp: serverPublicIP,
+            hint: err.message.includes('pg_hba.conf') 
+                ? `Добавьте IP ${serverPublicIP} в белый список вашей базы данных Timeweb.` 
+                : 'Проверьте пароль и SSL настройки.'
+        });
     }
 });
 
@@ -78,18 +80,13 @@ app.post('/api/login', async (req, res) => {
     const { email, password } = req.body;
     try {
         const result = await pool.query('SELECT content FROM woodplan_data WHERE id = 1');
-        if (result.rows.length === 0) {
-            return res.status(404).json({ success: false, message: "Компания не зарегистрирована." });
-        }
+        if (result.rows.length === 0) return res.status(404).json({ success: false, message: "База пуста" });
         const data = JSON.parse(result.rows[0].content);
         const user = (data.staff || []).find(u => u.email?.toLowerCase() === email?.toLowerCase());
-        
-        if (!user || user.password !== password) {
-            return res.status(401).json({ success: false, message: "Неверный логин или пароль." });
-        }
+        if (!user || user.password !== password) return res.status(401).json({ success: false, message: "Ошибка входа" });
         res.json({ success: true, user, payload: data });
     } catch (err) {
-        res.status(500).json({ success: false, message: "Ошибка БД: " + err.message });
+        res.status(500).json({ success: false, message: err.message });
     }
 });
 
@@ -123,6 +120,7 @@ app.get('*', (req, res) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 СЕРВЕР ЗАПУЩЕН НА ПОРТУ ${PORT}`);
-    initDatabase();
+    console.log(`🚀 Сервер запущен. Порт: ${PORT}`);
+    pool.query(`CREATE TABLE IF NOT EXISTS woodplan_data (id INT PRIMARY KEY, content TEXT, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)` )
+    .catch(e => console.log('Ожидание подключения к БД для создания таблиц...'));
 });

@@ -1,67 +1,60 @@
 
 import { Order, User, WorkSession, CloudConfig } from './types';
 
-// Определяем базовый URL для API (полезно для разработки)
-const API_BASE = ''; 
-
 export const dbService = {
-  async checkHealth(): Promise<{ success: boolean; message: string }> {
+  async checkHealth(): Promise<{ success: boolean; message: string; details?: string; serverIp?: string }> {
     try {
-      const response = await fetch(`${API_BASE}/api/health`);
-      if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        return { success: false, message: 'Ошибка БД: ' + (errData.database || response.statusText) };
-      }
+      const response = await fetch('/api/test-db');
       const data = await response.json();
-      return { success: true, message: 'Система: Связь ОК' };
+      
+      if (response.ok) {
+        return { success: true, message: 'Система: Связь ОК', serverIp: data.serverIp };
+      } else {
+        return { 
+            success: false, 
+            message: 'БД: Нет доступа', 
+            details: data.hint || data.message,
+            serverIp: data.serverIp
+        };
+      }
     } catch (err: any) {
-      console.error('ПОДРОБНОСТИ ОШИБКИ СВЯЗИ:', err);
-      return { success: false, message: 'Сервер: Ожидание...' };
+      return { success: false, message: 'API: Оффлайн', details: 'Сервер приложений не отвечает.' };
     }
   },
 
   async login(email: string, pass: string): Promise<{ success: boolean; user?: User; payload?: any; message?: string }> {
     try {
-      const response = await fetch(`${API_BASE}/api/login`, {
+      const response = await fetch('/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password: pass })
       });
       const data = await response.json();
-      if (!response.ok) return { success: false, message: data.message || "Ошибка входа" };
       return data;
     } catch (err: any) {
-      console.error('ОШИБКА LOGIN FETCH:', err);
-      return { success: false, message: "Ошибка связи с API" };
+      return { success: false, message: "Ошибка сети" };
     }
   },
 
   async saveToCloud(config: CloudConfig, data: any) {
     if (!config.enabled) return null;
     try {
-      const response = await fetch(`${API_BASE}/api/save`, {
+      const response = await fetch('/api/save', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-            action: 'save', 
-            payload: data,
-            token: config.apiToken
-        })
+        body: JSON.stringify({ payload: data, token: config.apiToken })
       });
-      return response.ok ? await response.json() : { success: false };
+      return response.ok;
     } catch (err) {
-      return { success: false };
+      return false;
     }
   },
 
   async loadFromCloud(config: CloudConfig) {
     try {
-      const response = await fetch(`${API_BASE}/api/load`, {
+      const response = await fetch('/api/load', {
         method: 'GET',
-        headers: { 
-            'Authorization': `Bearer ${config.apiToken}`, 
-            'Accept': 'application/json' 
-        }
+        headers: { 'Authorization': `Bearer ${config.apiToken}` }
       });
       if (!response.ok) return null;
       const result = await response.json();
@@ -71,7 +64,7 @@ export const dbService = {
     }
   },
 
-  async testConnection(config: CloudConfig): Promise<{ success: boolean; message: string }> {
+  async testConnection(config: CloudConfig) {
     return this.checkHealth();
   }
 };

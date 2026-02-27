@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { UserRole } from '../types';
-import { Layout, Shield, Factory, Lock, User as UserIcon, ArrowLeft, Loader2, Database, AlertCircle, CheckCircle } from 'lucide-react';
+import { Layout, Shield, Factory, Lock, User as UserIcon, ArrowLeft, Loader2, Database, AlertCircle, CheckCircle, Info } from 'lucide-react';
 import { dbService } from '../dbService';
 
 interface LoginPageProps {
@@ -18,9 +18,10 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onRegister }) => {
   const [adminPass, setAdminPass] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
   
   // Диагностика
-  const [systemHealth, setSystemHealth] = useState<{success: boolean, message: string} | null>(null);
+  const [systemHealth, setSystemHealth] = useState<{success: boolean, message: string, details?: string} | null>(null);
 
   useEffect(() => {
     const checkStatus = async () => {
@@ -28,8 +29,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onRegister }) => {
       setSystemHealth(health);
     };
     checkStatus();
-    // Повторяем проверку каждые 10 секунд
-    const interval = setInterval(checkStatus, 10000);
+    const interval = setInterval(checkStatus, 15000);
     return () => clearInterval(interval);
   }, []);
 
@@ -54,6 +54,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onRegister }) => {
       if (view === 'register') {
         if (!companyName || !email || !password) {
           setError('Заполните все поля регистрации');
+          setIsLoading(false);
           return;
         }
         const result = await onRegister(companyName, email, password);
@@ -85,16 +86,27 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onRegister }) => {
 
         <div className="bg-white p-8 rounded-3xl shadow-2xl border border-slate-100">
           {/* Статус системы */}
-          <div className="mb-6 flex items-center justify-center">
+          <div className="mb-6 flex flex-col items-center gap-2">
             {systemHealth ? (
-               <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest ${systemHealth.success ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+               <button 
+                 onClick={() => setShowDetails(!showDetails)}
+                 className={`flex items-center gap-2 px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-widest transition-all hover:scale-105 ${systemHealth.success ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}
+               >
                  {systemHealth.success ? <CheckCircle size={12}/> : <AlertCircle size={12}/>}
                  {systemHealth.message}
-               </div>
+                 <Info size={12} className="ml-1 opacity-50" />
+               </button>
             ) : (
-               <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-50 text-slate-400 rounded-full text-[10px] font-black uppercase">
-                 <Loader2 size={12} className="animate-spin"/> Диагностика...
+               <div className="flex items-center gap-2 px-4 py-2 bg-slate-50 text-slate-400 rounded-full text-[10px] font-black uppercase">
+                 <Loader2 size={12} className="animate-spin"/> Инициализация...
                </div>
+            )}
+            
+            {showDetails && systemHealth && !systemHealth.success && (
+              <div className="w-full p-3 bg-slate-900 text-slate-400 rounded-xl text-[9px] font-mono leading-relaxed animate-in fade-in slide-in-from-top-1">
+                <span className="text-rose-400 font-bold uppercase block mb-1">Log:</span>
+                {systemHealth.details || "Сервер не вернул детали ошибки. Проверьте логи Timeweb Cloud."}
+              </div>
             )}
           </div>
 
@@ -182,7 +194,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onRegister }) => {
                 <div>
                   <label className="block text-xs font-bold text-slate-500 uppercase mb-1 px-1">Email</label>
                   <div className="relative">
-                    <Shield className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                    <UserIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
                     <input 
                       type="email" 
                       disabled={isLoading}

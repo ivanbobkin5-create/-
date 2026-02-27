@@ -14,7 +14,7 @@ if (isset($_GET['ping'])) {
 
 // Если дошли сюда, значит пробуем основную логику
 $db_config = [
-    'host'     => '9f0f9288b234fa7e684a9441.twc1.net',
+    'host'     => '89.223.121.2',
     'port'     => '5432',
     'dbname'   => 'default_db',
     'user'     => 'gen_user',
