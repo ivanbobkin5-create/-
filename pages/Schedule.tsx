@@ -62,9 +62,24 @@ const Schedule: React.FC<ScheduleProps> = ({ staff, currentUser, shifts, onToggl
                 {weekDays.map(day => {
                   const dateKey = formatDateKey(day);
                   const isWorking = shifts[member.id]?.[dateKey];
+                  const canEdit = currentUser.role === UserRole.COMPANY_ADMIN || 
+                                  currentUser.isProductionHead || 
+                                  currentUser.id === member.id;
+
                   return (
                     <td key={dateKey} className="p-2 text-center">
-                      <button onClick={() => onToggleShift(member.id, dateKey)} className={`w-full h-12 rounded-2xl flex items-center justify-center border-2 transition-all ${isWorking ? 'bg-emerald-50 border-emerald-500 text-emerald-600' : 'bg-slate-50 border-transparent text-slate-300 hover:border-slate-200'}`}>{isWorking ? <Check size={20} /> : <X size={16} />}</button>
+                      <button 
+                        onClick={() => onToggleShift(member.id, dateKey)} 
+                        disabled={!canEdit}
+                        className={`w-full h-12 rounded-2xl flex items-center justify-center border-2 transition-all ${
+                          isWorking 
+                            ? 'bg-emerald-50 border-emerald-500 text-emerald-600' 
+                            : 'bg-slate-50 border-transparent text-slate-300 hover:border-slate-200'
+                        } ${!canEdit ? 'opacity-40 cursor-not-allowed grayscale' : ''}`}
+                        title={!canEdit ? "Нет прав для редактирования" : ""}
+                      >
+                        {isWorking ? <Check size={20} /> : <X size={16} />}
+                      </button>
                     </td>
                   );
                 })}

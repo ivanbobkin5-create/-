@@ -14,21 +14,11 @@ interface SidebarProps {
 
 const Sidebar: React.FC<SidebarProps> = ({ currentPage, onPageChange, onLogout, user, bitrixConfig }) => {
   const visibleItems = NAVIGATION_ITEMS.filter(item => {
-    if (user.role === UserRole.COMPANY_ADMIN) return true;
-    if (user.isProductionHead && item.id !== 'settings') return true;
+    if (user.role === UserRole.COMPANY_ADMIN || user.isProductionHead) return true;
     return item.roles.includes(user.role);
   });
 
   const handleNavClick = (item: typeof NAVIGATION_ITEMS[0]) => {
-    if (item.id === 'chat') {
-      const url = bitrixConfig?.chatUrl;
-      if (url) {
-        window.open(url, '_blank');
-      } else {
-        alert('Ссылка на чат не настроена в параметрах интеграции.');
-      }
-      return;
-    }
     onPageChange(item.id);
   };
 

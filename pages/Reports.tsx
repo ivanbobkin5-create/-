@@ -71,9 +71,9 @@ const Reports: React.FC<ReportsProps> = ({ orders, staff, workSessions = [] }) =
       const day = t.completedAt!.split('T')[0];
       if (days[day] !== undefined) days[day]++;
     });
-    return Object.entries(days).map(([name, value]) => ({ 
+    return Object.entries(days).map(([name, count]) => ({ 
       name: new Date(name).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }), 
-      value 
+      'Количество': count 
     }));
   }, [completedTasks]);
 
@@ -132,7 +132,7 @@ const Reports: React.FC<ReportsProps> = ({ orders, staff, workSessions = [] }) =
                       <XAxis dataKey="name" fontSize={10} axisLine={false} tickLine={false} tick={{fill: '#94a3b8'}} />
                       <YAxis axisLine={false} tickLine={false} fontSize={10} tick={{fill: '#94a3b8'}} />
                       <Tooltip contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }} />
-                      <Area type="monotone" dataKey="value" stroke="#3b82f6" strokeWidth={3} fillOpacity={1} fill="url(#colorValue)" />
+                      <Area type="monotone" dataKey="Количество" stroke="#3b82f6" strokeWidth={3} fillOpacity={1} fill="url(#colorValue)" />
                     </AreaChart>
                   </ResponsiveContainer>
                 </div>

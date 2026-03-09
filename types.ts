@@ -67,6 +67,8 @@ export interface User {
   isProductionHead?: boolean;
   password?: string; 
   isLocked?: boolean; 
+  b24Id?: string;
+  shiftSalary?: number;
 }
 
 export interface CloudConfig {
@@ -87,6 +89,7 @@ export interface BitrixConfig {
   portalLogo?: string;
   cloud?: CloudConfig;
   autoShiftEndTime?: string; // Час в формате "HH:mm"
+  paymentFormat?: 'rate' | 'salary';
 }
 
 export interface BitrixFunnel {

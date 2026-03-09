@@ -43,7 +43,6 @@ export const NAVIGATION_ITEMS = [
   { id: 'planning', label: 'Планирование', icon: <Calendar size={20} />, roles: [UserRole.COMPANY_ADMIN], allowProductionHead: true },
   { id: 'schedule', label: 'График работы', icon: <CalendarDays size={20} />, roles: [UserRole.COMPANY_ADMIN, UserRole.EMPLOYEE] },
   { id: 'production', label: 'Производство', icon: <ClipboardList size={20} />, roles: [UserRole.COMPANY_ADMIN, UserRole.EMPLOYEE] },
-  { id: 'chat', label: 'Чат', icon: <MessageSquare size={20} />, roles: [UserRole.COMPANY_ADMIN, UserRole.EMPLOYEE], isExternal: true },
   { id: 'reports', label: 'Отчеты', icon: <BarChart3 size={20} />, roles: [UserRole.COMPANY_ADMIN], allowProductionHead: true },
   { id: 'salaries', label: 'Зарплата', icon: <Wallet size={20} />, roles: [UserRole.COMPANY_ADMIN], allowProductionHead: true },
   { id: 'users', label: 'Сотрудники', icon: <Users size={20} />, roles: [UserRole.COMPANY_ADMIN] },

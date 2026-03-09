@@ -1,6 +1,6 @@
 
 import React, { useMemo, useState } from 'react';
-import { Order, User, TaskStatus, Task, ProductionStage } from '../types';
+import { Order, User, TaskStatus, Task, ProductionStage, BitrixConfig } from '../types';
 import { STAGE_CONFIG } from '../constants';
 import { 
   Wallet, TrendingUp, Users, 
@@ -10,7 +10,7 @@ import {
 
 const MONTHS = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
 
-const Salaries: React.FC<{orders: Order[], staff: User[]}> = ({ orders, staff }) => {
+const Salaries: React.FC<{orders: Order[], staff: User[], bitrixConfig?: BitrixConfig, shifts?: Record<string, Record<string, boolean>>}> = ({ orders, staff, bitrixConfig, shifts = {} }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
@@ -25,7 +25,12 @@ const Salaries: React.FC<{orders: Order[], staff: User[]}> = ({ orders, staff })
         const d = new Date(compDate);
         if (d.getMonth() !== selectedMonth || d.getFullYear() !== selectedYear) return;
 
-        if (task.status === TaskStatus.COMPLETED && task.rate) {
+        if (task.status === TaskStatus.COMPLETED) {
+          const isSalary = bitrixConfig?.paymentFormat === 'salary';
+          if (!isSalary && !task.rate) return;
+          
+          const rateToUse = isSalary ? 0 : (task.rate || 0);
+
           const addStat = (uid: string, amt: number, shr: number) => {
             if (!stats[uid]) stats[uid] = { totalEarned: 0, tasksDetails: [] };
             stats[uid].totalEarned += amt;
@@ -48,13 +53,13 @@ const Salaries: React.FC<{orders: Order[], staff: User[]}> = ({ orders, staff })
             if (totalScans > 0) {
               Object.entries(scanMap).forEach(([uid, count]) => {
                 const share = count / totalScans;
-                addStat(uid, task.rate! * share, Math.round(share * 100));
+                addStat(uid, rateToUse * share, Math.round(share * 100));
               });
             } else if (task.assignedTo) {
-              addStat(task.assignedTo, task.rate, 100);
+              addStat(task.assignedTo, rateToUse, 100);
             }
           } else if (task.assignedTo) {
-            addStat(task.assignedTo, task.rate, 100);
+            addStat(task.assignedTo, rateToUse, 100);
           }
         }
       });
@@ -62,11 +67,21 @@ const Salaries: React.FC<{orders: Order[], staff: User[]}> = ({ orders, staff })
 
     const results = Object.entries(stats).map(([uid, data]) => {
       const user = staff.find(s => s.id === uid);
+      const userShifts = shifts[uid] || {};
+      const workedShiftsCount = Object.entries(userShifts).filter(([date, isScheduled]) => {
+        const d = new Date(date);
+        return isScheduled && d.getMonth() === selectedMonth && d.getFullYear() === selectedYear;
+      }).length;
+
+      const isSalary = bitrixConfig?.paymentFormat === 'salary';
+      const totalEarned = isSalary ? workedShiftsCount * (user?.shiftSalary || 0) : Math.round(data.totalEarned);
+
       return {
         id: uid, 
         name: user?.name || `ID:${uid.slice(-4)}`,
-        totalEarned: Math.round(data.totalEarned), 
+        totalEarned, 
         tasksCount: data.tasksDetails.length, 
+        workedShiftsCount,
         details: data.tasksDetails,
         isCurrentlyProduction: !!user?.isProduction
       };
@@ -74,8 +89,17 @@ const Salaries: React.FC<{orders: Order[], staff: User[]}> = ({ orders, staff })
 
     // Добавляем сотрудников, которые сейчас "В цеху", даже если у них 0
     staff.filter(s => s.isProduction && !stats[s.id]).forEach(s => {
+      const userShifts = shifts[s.id] || {};
+      const workedShiftsCount = Object.entries(userShifts).filter(([date, isScheduled]) => {
+        const d = new Date(date);
+        return isScheduled && d.getMonth() === selectedMonth && d.getFullYear() === selectedYear;
+      }).length;
+
+      const isSalary = bitrixConfig?.paymentFormat === 'salary';
+      const totalEarned = isSalary ? workedShiftsCount * (s.shiftSalary || 0) : 0;
+
       results.push({
-        id: s.id, name: s.name, totalEarned: 0, tasksCount: 0, details: [], isCurrentlyProduction: true
+        id: s.id, name: s.name, totalEarned, tasksCount: 0, workedShiftsCount, details: [], isCurrentlyProduction: true
       });
     });
 
@@ -128,6 +152,7 @@ const Salaries: React.FC<{orders: Order[], staff: User[]}> = ({ orders, staff })
                <tr className="bg-slate-50/50 text-[10px] font-black text-slate-400 uppercase tracking-widest">
                  <th className="px-8 py-4">Сотрудник</th>
                  <th className="px-8 py-4 text-center">Задач</th>
+                 {bitrixConfig?.paymentFormat === 'salary' && <th className="px-8 py-4 text-center">Смен</th>}
                  <th className="px-8 py-4 text-right">Сумма</th>
                </tr>
              </thead>
@@ -146,6 +171,11 @@ const Salaries: React.FC<{orders: Order[], staff: User[]}> = ({ orders, staff })
                     <td className="px-8 py-5 text-center">
                       <span className="px-3 py-1 bg-slate-100 rounded-full text-xs font-bold text-slate-600">{stat.tasksCount}</span>
                     </td>
+                    {bitrixConfig?.paymentFormat === 'salary' && (
+                      <td className="px-8 py-5 text-center">
+                        <span className="px-3 py-1 bg-blue-50 text-blue-600 rounded-full text-xs font-black">{stat.workedShiftsCount}</span>
+                      </td>
+                    )}
                     <td className="px-8 py-5 text-right">
                       <div className="flex items-center justify-end gap-4">
                         <div className="text-lg font-black text-slate-800">{stat.totalEarned.toLocaleString('ru-RU')} ₽</div>
@@ -169,6 +199,7 @@ const Salaries: React.FC<{orders: Order[], staff: User[]}> = ({ orders, staff })
                     <h3 className="text-2xl font-black text-slate-800">{selectedStaffDetails.name}</h3>
                     <div className="flex items-center gap-4 mt-1 text-xs font-bold text-slate-400 uppercase tracking-widest">
                        <span>{MONTHS[selectedMonth]} {selectedYear}</span>
+                       {bitrixConfig?.paymentFormat === 'salary' && <span className="text-blue-600">ОТРАБОТАНО СМЕН: {selectedStaffDetails.workedShiftsCount}</span>}
                        <span className="text-emerald-600">ИТОГО: {selectedStaffDetails.totalEarned.toLocaleString('ru-RU')} ₽</span>
                     </div>
                   </div>
@@ -179,31 +210,58 @@ const Salaries: React.FC<{orders: Order[], staff: User[]}> = ({ orders, staff })
                <table className="w-full text-left">
                   <thead>
                     <tr className="text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">
-                      <th className="pb-4">Дата</th>
-                      <th className="pb-4">Клиент</th>
-                      <th className="pb-4">Этап</th>
-                      <th className="pb-4 text-center">КТУ (%)</th>
-                      <th className="pb-4 text-right">Начислено</th>
+                      {bitrixConfig?.paymentFormat === 'salary' ? (
+                        <>
+                          <th className="pb-4">Дата смены</th>
+                          <th className="pb-4 text-right">Ставка</th>
+                        </>
+                      ) : (
+                        <>
+                          <th className="pb-4">Дата</th>
+                          <th className="pb-4">Клиент</th>
+                          <th className="pb-4">Этап</th>
+                          <th className="pb-4 text-center">КТУ (%)</th>
+                          <th className="pb-4 text-right">Начислено</th>
+                        </>
+                      )}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {selectedStaffDetails.details.map((d, i) => (
-                      <tr key={i} className="hover:bg-slate-50 transition-colors">
-                        <td className="py-4 text-xs font-medium text-slate-400">{new Date(d.date).toLocaleDateString('ru-RU')}</td>
-                        <td className="py-4">
-                           <div className="text-sm font-black text-slate-800">{d.client}</div>
-                           <div className="text-[9px] text-slate-400 font-bold uppercase tracking-tight">Заказ #{d.orderNo}</div>
-                        </td>
-                        <td className="py-4">
-                           <div className="flex items-center gap-2">
-                             <div className={`p-1.5 rounded-lg text-white ${STAGE_CONFIG[d.stage as ProductionStage].color}`}>{STAGE_CONFIG[d.stage as ProductionStage].icon}</div>
-                             <span className="text-xs font-bold text-slate-600">{STAGE_CONFIG[d.stage as ProductionStage].label}</span>
-                           </div>
-                        </td>
-                        <td className="py-4 text-center"><div className="text-xs font-black text-blue-600 bg-blue-50 px-2 py-1 rounded-lg">{d.share}%</div></td>
-                        <td className="py-4 text-right"><div className="text-sm font-black text-slate-800">{d.amount.toLocaleString('ru-RU')} ₽</div></td>
-                      </tr>
-                    ))}
+                    {bitrixConfig?.paymentFormat === 'salary' ? (
+                      Object.entries(shifts[selectedStaffId] || {})
+                        .filter(([date, isScheduled]) => {
+                          const d = new Date(date);
+                          return isScheduled && d.getMonth() === selectedMonth && d.getFullYear() === selectedYear;
+                        })
+                        .sort(([dateA], [dateB]) => new Date(dateA).getTime() - new Date(dateB).getTime())
+                        .map(([date], i) => {
+                          const user = staff.find(s => s.id === selectedStaffId);
+                          return (
+                            <tr key={i} className="hover:bg-slate-50 transition-colors">
+                              <td className="py-4 text-sm font-bold text-slate-800">{new Date(date).toLocaleDateString('ru-RU')}</td>
+                              <td className="py-4 text-right text-sm font-black text-slate-800">{(user?.shiftSalary || 0).toLocaleString('ru-RU')} ₽</td>
+                            </tr>
+                          );
+                        })
+                    ) : (
+                      selectedStaffDetails.details.map((d, i) => (
+                        <tr key={i} className="hover:bg-slate-50 transition-colors">
+                          <td className="py-4 text-xs font-medium text-slate-400">{new Date(d.date).toLocaleDateString('ru-RU')}</td>
+                          <td className="py-4">
+                             <div className="text-sm font-black text-slate-800">{d.client}</div>
+                             <div className="text-[9px] text-slate-400 font-bold uppercase tracking-tight">Заказ #{d.orderNo}</div>
+                          </td>
+                          <td className="py-4">
+                             <div className="flex items-center gap-2">
+                               <div className={`p-1.5 rounded-lg text-white ${STAGE_CONFIG[d.stage as ProductionStage].color}`}>{STAGE_CONFIG[d.stage as ProductionStage].icon}</div>
+                               <span className="text-xs font-bold text-slate-600">{STAGE_CONFIG[d.stage as ProductionStage].label}</span>
+                             </div>
+                          </td>
+                          <td className="py-4 text-center"><div className="text-xs font-black text-blue-600 bg-blue-50 px-2 py-1 rounded-lg">{d.share}%</div></td>
+                          <td className="py-4 text-right"><div className="text-sm font-black text-slate-800">{d.amount.toLocaleString('ru-RU')} ₽</div></td>
+                        </tr>
+                      ))
+                    )}
                   </tbody>
                </table>
             </div>

@@ -1,6 +1,6 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
-import { Order, ProductionStage, TaskStatus, User, Task } from '../types';
+import { Order, ProductionStage, TaskStatus, User, Task, BitrixConfig } from '../types';
 import { STAGE_CONFIG, STAGE_SEQUENCE, getEmployeeColor } from '../constants';
 import { 
   Search, RefreshCw, Calendar as CalendarIcon, 
@@ -16,12 +16,27 @@ interface PlanningProps {
   onSyncBitrix: () => Promise<number>;
   onUpdateTaskPlanning: (orderId: string, taskId: string, date: string | undefined, userId: string | undefined, accompliceIds?: string[]) => void;
   onUpdateTaskRate?: (orderId: string, taskId: string, rate: number) => void;
+  onUpdateOrderDescription?: (orderId: string, description: string) => void;
   isBitrixEnabled: boolean;
   staff: User[];
   shifts?: Record<string, Record<string, boolean>>;
+  user: User | null;
+  bitrixConfig?: BitrixConfig;
 }
 
-const Planning: React.FC<PlanningProps> = ({ orders, onAddOrder, onSyncBitrix, onUpdateTaskPlanning, onUpdateTaskRate, isBitrixEnabled, staff, shifts = {} }) => {
+const Planning: React.FC<PlanningProps> = ({ 
+  orders, 
+  onAddOrder, 
+  onSyncBitrix, 
+  onUpdateTaskPlanning, 
+  onUpdateTaskRate, 
+  onUpdateOrderDescription,
+  isBitrixEnabled, 
+  staff, 
+  shifts = {},
+  user,
+  bitrixConfig
+}) => {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedTaskId, setSelectedTaskId] = useState<{orderId: string, taskId: string} | null>(null);
   const [inboxSearch, setInboxSearch] = useState('');
@@ -35,6 +50,8 @@ const Planning: React.FC<PlanningProps> = ({ orders, onAddOrder, onSyncBitrix, o
 
   const [assigneeMenu, setAssigneeMenu] = useState<{orderId: string, taskId: string, type: 'main' | 'support', date?: string} | null>(null);
   const [rateMenu, setRateMenu] = useState<{orderId: string, taskId: string, currentRate: number} | null>(null);
+  const [descriptionMenu, setDescriptionMenu] = useState<{orderId: string, description: string} | null>(null);
+  const [tempDescription, setTempDescription] = useState<string>('');
   const [tempRate, setTempRate] = useState<string>('');
   const [groupingMode, setGroupingMode] = useState<GroupingMode>(() => (localStorage.getItem('woodplan_grouping') as GroupingMode) || 'stage');
   const [expandedGroups, setExpandedGroups] = useState<string[]>([]);
@@ -56,6 +73,13 @@ const Planning: React.FC<PlanningProps> = ({ orders, onAddOrder, onSyncBitrix, o
     const list: (Task & { order: Order })[] = [];
     orders.forEach(order => {
       if (order.tasks.find(t => t.stage === ProductionStage.SHIPMENT)?.status === TaskStatus.COMPLETED) return;
+      
+      if (order.source === 'BITRIX24' && bitrixConfig?.triggerStageIds?.length) {
+        if (!order.externalStageId || !bitrixConfig.triggerStageIds.includes(order.externalStageId)) {
+          return;
+        }
+      }
+
       order.tasks.forEach(task => {
         if (!task.plannedDate && task.status !== TaskStatus.COMPLETED) {
           const s = inboxSearch.toLowerCase();
@@ -120,8 +144,22 @@ const Planning: React.FC<PlanningProps> = ({ orders, onAddOrder, onSyncBitrix, o
               {(expandedGroups.includes(groupId) || inboxSearch) && (
                 <div className="pl-2 space-y-2 animate-in slide-in-from-top-1">
                   {group.tasks.map((task: any) => (
-                    <div key={task.id} onClick={() => setSelectedTaskId(selectedTaskId?.taskId === task.id ? null : { orderId: task.order.id, taskId: task.id })} className={`p-3 rounded-2xl border cursor-pointer transition-all ${selectedTaskId?.taskId === task.id ? 'bg-blue-600 border-blue-600 text-white shadow-lg' : 'bg-white border-slate-100'}`}>
-                      <div className="font-bold text-xs truncate">{groupingMode === 'stage' ? task.order.clientName : (task.title || 'Без описания')}</div>
+                    <div key={task.id} onClick={() => setSelectedTaskId(selectedTaskId?.taskId === task.id ? null : { orderId: task.order.id, taskId: task.id })} className={`p-3 rounded-2xl border cursor-pointer transition-all ${selectedTaskId?.taskId === task.id ? 'bg-blue-600 border-blue-600 text-white shadow-lg' : 'bg-white border-slate-100 hover:border-blue-200'}`}>
+                      <div className="flex justify-between items-start gap-2">
+                        <div className="font-bold text-xs line-clamp-2 leading-tight">{`${STAGE_CONFIG[task.stage as ProductionStage].label} | ${task.order.clientName}`}</div>
+                        {task.externalTaskId && task.externalTaskId !== 'undefined' && bitrixConfig?.webhookUrl && (
+                          <a 
+                            href={`${bitrixConfig.webhookUrl.split('/rest/')[0]}/tasks/task/view/${task.externalTaskId}/`} 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            className={`p-1 rounded-md transition-colors shrink-0 ${selectedTaskId?.taskId === task.id ? 'text-blue-200 hover:text-white hover:bg-blue-500' : 'text-blue-400 hover:text-blue-600 hover:bg-blue-50'}`}
+                            title="Открыть в Битрикс24"
+                            onClick={e => e.stopPropagation()}
+                          >
+                            <span className="text-[8px] font-black uppercase">B24</span>
+                          </a>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -183,7 +221,21 @@ const Planning: React.FC<PlanningProps> = ({ orders, onAddOrder, onSyncBitrix, o
                                   <span className={`text-[10px] font-bold leading-tight line-clamp-2 ${isC ? 'text-emerald-700' : 'text-slate-800'}`}>{task.order.clientName}</span>
                                   {isOverdue && <span className="flex items-center gap-1 text-[8px] font-black text-rose-600 uppercase mt-1"><Clock size={8}/> ПРОСРОЧЕНО</span>}
                                 </div>
-                                <button onClick={e => { e.stopPropagation(); onUpdateTaskPlanning(task.order.id, task.id, undefined, undefined, []); }} className="p-1 text-slate-300 hover:text-rose-500 shrink-0"><X size={10} /></button>
+                                <div className="flex items-center gap-1 shrink-0">
+                                  {task.externalTaskId && task.externalTaskId !== 'undefined' && bitrixConfig?.webhookUrl && (
+                                    <a 
+                                      href={`${bitrixConfig.webhookUrl.split('/rest/')[0]}/tasks/task/view/${task.externalTaskId}/`} 
+                                      target="_blank" 
+                                      rel="noopener noreferrer"
+                                      className="p-1 text-blue-400 hover:text-blue-600 transition-colors"
+                                      title="Открыть в Битрикс24"
+                                      onClick={e => e.stopPropagation()}
+                                    >
+                                      <span className="text-[8px] font-black uppercase">B24</span>
+                                    </a>
+                                  )}
+                                  <button onClick={e => { e.stopPropagation(); onUpdateTaskPlanning(task.order.id, task.id, undefined, undefined, []); }} className="p-1 text-slate-300 hover:text-rose-500"><X size={10} /></button>
+                                </div>
                               </div>
                               <div className="mt-auto space-y-2">
                                 <div className="space-y-1">
@@ -198,10 +250,12 @@ const Planning: React.FC<PlanningProps> = ({ orders, onAddOrder, onSyncBitrix, o
                                   </div>
                                 </div>
                                 <div className="flex items-center justify-between pt-1 border-t border-slate-100">
-                                   <div onClick={e => { e.stopPropagation(); setRateMenu({ orderId: task.order.id, taskId: task.id, currentRate: task.rate || 0 }); setTempRate(String(task.rate || '')); }} className={`text-[9px] font-black px-1.5 py-0.5 rounded cursor-pointer transition-all ${task.rate ? 'bg-amber-100 text-amber-600 border border-amber-200' : 'text-slate-300'}`}>
-                                      {task.rate ? `${task.rate} ₽` : '+ Ставка'}
-                                   </div>
-                                   <span className="text-[7px] font-black uppercase text-slate-300">#{task.order.orderNumber}</span>
+                                   {bitrixConfig?.paymentFormat !== 'salary' && (
+                                     <div onClick={e => { e.stopPropagation(); setRateMenu({ orderId: task.order.id, taskId: task.id, currentRate: task.rate || 0 }); setTempRate(String(task.rate || '')); }} className={`text-[9px] font-black px-1.5 py-0.5 rounded cursor-pointer transition-all ${task.rate ? 'bg-amber-100 text-amber-600 border border-amber-200' : 'text-slate-300'}`}>
+                                        {task.rate ? `${task.rate} ₽` : '+ Ставка'}
+                                     </div>
+                                   )}
+                                    <span className="text-[7px] font-black uppercase text-slate-300 ml-auto"></span>
                                 </div>
                               </div>
                             </div>
@@ -216,7 +270,141 @@ const Planning: React.FC<PlanningProps> = ({ orders, onAddOrder, onSyncBitrix, o
           </div>
         </div>
       </div>
-      {/* Остальные модальные окна assigneeMenu и rateMenu опущены для краткости, они остаются без изменений */}
+      {/* Description Modal */}
+      {descriptionMenu && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+              <h3 className="font-bold text-slate-800 flex items-center gap-2"><AlertCircle size={18} className="text-blue-600"/> Описание заказа</h3>
+              <button onClick={() => setDescriptionMenu(null)} className="p-2 hover:bg-white rounded-xl transition-colors"><X size={20} className="text-slate-400" /></button>
+            </div>
+            <div className="p-6 space-y-4">
+              <textarea
+                value={tempDescription}
+                onChange={(e) => setTempDescription(e.target.value)}
+                className="w-full h-40 p-4 rounded-2xl border border-slate-200 focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all text-sm resize-none"
+                placeholder="Введите описание заказа..."
+              />
+              <div className="flex gap-3">
+                <button onClick={() => setDescriptionMenu(null)} className="flex-1 py-3 px-4 rounded-2xl font-bold text-slate-600 hover:bg-slate-50 transition-colors">Отмена</button>
+                <button 
+                  onClick={() => {
+                    if (onUpdateOrderDescription) onUpdateOrderDescription(descriptionMenu.orderId, tempDescription);
+                    setDescriptionMenu(null);
+                  }}
+                  className="flex-1 py-3 px-4 rounded-2xl font-bold bg-blue-600 text-white hover:bg-blue-700 shadow-lg shadow-blue-500/20 transition-all"
+                >
+                  Сохранить
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Assignee Menu */}
+      {assigneeMenu && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl w-full max-w-sm shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+              <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                {assigneeMenu.type === 'main' ? <UserIcon size={18} className="text-blue-600"/> : <UserPlus size={18} className="text-blue-600"/>}
+                {assigneeMenu.type === 'main' ? 'Выбор исполнителя' : 'Выбор помощников'}
+              </h3>
+              <button onClick={() => setAssigneeMenu(null)} className="p-2 hover:bg-white rounded-xl transition-colors"><X size={20} className="text-slate-400" /></button>
+            </div>
+            <div className="p-4 max-h-[400px] overflow-y-auto custom-scrollbar space-y-1">
+              {staff
+                .filter(member => {
+                  if (!member.isProduction) return false;
+                  if (!assigneeMenu.date) return true;
+                  return shifts[member.id]?.[assigneeMenu.date];
+                })
+                .map(member => {
+                  const isSelected = assigneeMenu.type === 'main' 
+                    ? orders.find(o => o.id === assigneeMenu.orderId)?.tasks.find(t => t.id === assigneeMenu.taskId)?.assignedTo === member.id
+                    : orders.find(o => o.id === assigneeMenu.orderId)?.tasks.find(t => t.id === assigneeMenu.taskId)?.accompliceIds?.includes(member.id);
+                  
+                  const isWorking = assigneeMenu.date && shifts[member.id]?.[assigneeMenu.date];
+
+                  return (
+                    <button 
+                      key={member.id}
+                      onClick={() => {
+                        const order = orders.find(o => o.id === assigneeMenu.orderId);
+                        const task = order?.tasks.find(t => t.id === assigneeMenu.taskId);
+                        if (!task) return;
+
+                        if (assigneeMenu.type === 'main') {
+                          onUpdateTaskPlanning(assigneeMenu.orderId, assigneeMenu.taskId, task.plannedDate, member.id, task.accompliceIds);
+                        } else {
+                          const currentAccomplices = task.accompliceIds || [];
+                          const newAccomplices = currentAccomplices.includes(member.id)
+                            ? currentAccomplices.filter(id => id !== member.id)
+                            : [...currentAccomplices, member.id];
+                          onUpdateTaskPlanning(assigneeMenu.orderId, assigneeMenu.taskId, task.plannedDate, task.assignedTo, newAccomplices);
+                        }
+                        if (assigneeMenu.type === 'main') setAssigneeMenu(null);
+                      }}
+                      className={`w-full flex items-center justify-between p-3 rounded-2xl transition-all ${isSelected ? 'bg-blue-600 text-white shadow-lg' : 'hover:bg-slate-50 text-slate-700'}`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs ${isSelected ? 'bg-white/20' : getEmployeeColor(member.name)}`}>
+                          {member.name[0]}
+                        </div>
+                        <div className="text-left">
+                          <div className="font-bold text-sm">{member.name}</div>
+                          <div className={`text-[10px] ${isSelected ? 'text-blue-100' : 'text-slate-400'}`}>{member.role}</div>
+                        </div>
+                      </div>
+                      {isWorking && <div className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase ${isSelected ? 'bg-white/20 text-white' : 'bg-emerald-100 text-emerald-600'}`}>На смене</div>}
+                    </button>
+                  );
+                })}
+              {staff.filter(member => member.isProduction && assigneeMenu.date && shifts[member.id]?.[assigneeMenu.date]).length === 0 && (
+                <div className="p-8 text-center space-y-2">
+                  <div className="text-slate-300 flex justify-center"><UserIcon size={32} /></div>
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Нет сотрудников на смене</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Rate Menu */}
+      {rateMenu && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl w-full max-w-xs shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+              <h3 className="font-bold text-slate-800 flex items-center gap-2"><Coins size={18} className="text-amber-500"/> Ставка (₽)</h3>
+              <button onClick={() => setRateMenu(null)} className="p-2 hover:bg-white rounded-xl transition-colors"><X size={20} className="text-slate-400" /></button>
+            </div>
+            <div className="p-6 space-y-4">
+              <input
+                type="number"
+                value={tempRate}
+                onChange={(e) => setTempRate(e.target.value)}
+                className="w-full p-4 rounded-2xl border border-slate-200 focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all text-center text-2xl font-black"
+                placeholder="0"
+                autoFocus
+              />
+              <div className="flex gap-3">
+                <button onClick={() => setRateMenu(null)} className="flex-1 py-3 px-4 rounded-2xl font-bold text-slate-600 hover:bg-slate-50 transition-colors">Отмена</button>
+                <button 
+                  onClick={() => {
+                    if (onUpdateTaskRate) onUpdateTaskRate(rateMenu.orderId, rateMenu.taskId, Number(tempRate));
+                    setRateMenu(null);
+                  }}
+                  className="flex-1 py-3 px-4 rounded-2xl font-bold bg-blue-600 text-white hover:bg-blue-700 shadow-lg shadow-blue-500/20 transition-all"
+                >
+                  Ок
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

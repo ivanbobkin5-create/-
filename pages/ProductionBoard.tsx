@@ -1,6 +1,6 @@
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Order, ProductionStage, TaskStatus, Task, User, Detail, Package, UserRole } from '../types';
+import { Order, ProductionStage, TaskStatus, Task, User, Detail, Package, UserRole, BitrixConfig } from '../types';
 import { STAGE_CONFIG, STAGE_SEQUENCE, getEmployeeColor } from '../constants';
 import { 
   Clock, AlertCircle, Lock, 
@@ -22,11 +22,12 @@ interface ProductionBoardProps {
   isShiftActive: boolean;
   shifts: Record<string, Record<string, boolean>>;
   onTriggerShiftFlash: () => void;
+  bitrixConfig?: BitrixConfig;
 }
 
 const ProductionBoard: React.FC<ProductionBoardProps> = ({ 
   orders, onUpdateTask, onAddAccomplice, onUpdateDetails, 
-  staff = [], currentUser, onAddB24Comment, isShiftActive, shifts, onTriggerShiftFlash 
+  staff = [], currentUser, onAddB24Comment, isShiftActive, shifts, onTriggerShiftFlash, bitrixConfig 
 }) => {
   const [activeStage, setActiveStage] = useState<ProductionStage>(ProductionStage.SAWING);
   const [selectedTaskIds, setSelectedTaskIds] = useState<{orderId: string, taskId: string} | null>(null);
@@ -428,9 +429,11 @@ const ProductionBoard: React.FC<ProductionBoardProps> = ({
     if (task.stage !== ProductionStage.KIT_ASSEMBLY && scannedTotal < planTotal) {
        const missing = planTotal - scannedTotal;
        if (!window.confirm(`Внимание: не хватает ${missing} ед. деталей. Всё равно завершить этап?`)) return;
+       onUpdateTask(order.id, task.id, TaskStatus.COMPLETED, `ВНИМАНИЕ: Задача завершена с нехваткой ${missing} ед. деталей.`);
+    } else {
+       onUpdateTask(order.id, task.id, TaskStatus.COMPLETED, `Задача завершена в полном объеме.`);
     }
 
-    onUpdateTask(order.id, task.id, TaskStatus.COMPLETED);
     setSelectedTaskIds(null);
   };
 
@@ -511,8 +514,13 @@ const ProductionBoard: React.FC<ProductionBoardProps> = ({
               <div className="p-6 flex-1 relative">
                 {task.isLocked && <div className="absolute top-4 right-4 bg-slate-900 text-white p-2 rounded-xl shadow-lg"><Lock size={16} /></div>}
                 {task.status === TaskStatus.PAUSED && <div className="absolute top-4 right-4 bg-amber-500 text-white px-3 py-1 rounded-xl shadow-lg text-[8px] font-black uppercase">ПАУЗА</div>}
-                <div className="flex justify-between items-start mb-4"><span className="text-[10px] font-black text-blue-600 bg-blue-50 px-2.5 py-1 rounded-lg uppercase">{task.order.orderNumber}</span><div className="text-[10px] text-slate-400 font-bold uppercase truncate max-w-[100px]">{task.assignee?.name || '—'}</div></div>
+                <div className="flex justify-between items-start mb-4">
+                  <div className="text-[10px] text-slate-400 font-bold uppercase truncate max-w-[100px]">{task.assignee?.name || '—'}</div>
+                </div>
                 <h3 className="font-bold text-slate-800 mb-2 leading-snug text-lg">{task.order.clientName}</h3>
+                {task.order.description && (
+                  <p className="text-[10px] text-slate-500 line-clamp-2 mb-2 italic">{task.order.description}</p>
+                )}
                 {task.isLocked && <div className="p-3 bg-amber-50 text-amber-700 rounded-2xl text-[10px] font-bold border border-amber-100 uppercase">Ожидает: {task.prevStageLabel}</div>}
               </div>
               <div className="p-4 bg-slate-50 border-t flex gap-2">
@@ -544,7 +552,7 @@ const ProductionBoard: React.FC<ProductionBoardProps> = ({
         <div className="fixed inset-0 z-50 bg-slate-900 flex flex-col animate-in fade-in duration-300">
           <header className="h-20 bg-slate-800 border-b border-slate-700 px-8 flex items-center justify-between shrink-0">
             <div className="flex items-center gap-6"><button onClick={() => setSelectedTaskIds(null)} className="p-3 bg-slate-700 text-white rounded-2xl"><ArrowLeft size={24} /></button>
-            <div><div className="flex items-center gap-2"><span className="text-[10px] font-black bg-emerald-600 text-white px-2 py-0.5 rounded uppercase">{order.orderNumber}</span><h2 className="text-xl font-bold text-white">{order.clientName}</h2></div><div className="text-xs text-slate-400 font-bold uppercase">Комплектация фурнитуры</div></div></div>
+            <div><div className="flex items-center gap-2"><h2 className="text-xl font-bold text-white">{order.clientName}</h2></div><div className="text-xs text-slate-400 font-bold uppercase">Комплектация фурнитуры</div></div></div>
             <button onClick={handleCompleteRequest} className="px-8 py-4 bg-emerald-600 text-white rounded-2xl font-black text-sm uppercase shadow-xl">Завершить этап</button>
           </header>
           <div className="flex-1 p-10 flex gap-10 overflow-hidden">
@@ -574,8 +582,34 @@ const ProductionBoard: React.FC<ProductionBoardProps> = ({
     return (
       <div className="fixed inset-0 z-50 bg-slate-900 flex flex-col animate-in fade-in duration-300">
         <header className="h-20 bg-slate-800 border-b border-slate-700 px-8 flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-6"><button onClick={() => setSelectedTaskIds(null)} className="p-3 bg-slate-700 text-white rounded-2xl"><ArrowLeft size={24} /></button>
-          <div><div className="flex items-center gap-2"><span className="text-[10px] font-black bg-blue-600 text-white px-2 py-0.5 rounded uppercase">{order.orderNumber}</span><h2 className="text-xl font-bold text-white">{order.clientName}</h2></div><div className="text-xs text-slate-400 font-bold uppercase flex items-center gap-2">{STAGE_CONFIG[task.stage].icon} {STAGE_CONFIG[task.stage].label}</div></div></div>
+          <div className="flex items-center gap-6">
+            <button onClick={() => setSelectedTaskIds(null)} className="p-3 bg-slate-700 text-white rounded-2xl">
+              <ArrowLeft size={24} />
+            </button>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-xl font-bold text-white">{order.clientName}</h2>
+                {task.externalTaskId && task.externalTaskId !== 'undefined' && bitrixConfig?.webhookUrl && (
+                  <a 
+                    href={`${bitrixConfig.webhookUrl.split('/rest/')[0]}/tasks/task/view/${task.externalTaskId}/`} 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="ml-2 px-2 py-1 bg-blue-500/20 text-blue-400 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-blue-500/40 transition-colors"
+                  >
+                    B24
+                  </a>
+                )}
+              </div>
+              <div className="text-xs text-slate-400 font-bold uppercase flex items-center gap-2">
+                {STAGE_CONFIG[task.stage].icon} {STAGE_CONFIG[task.stage].label}
+              </div>
+              {order.description && (
+                <div className="mt-2 p-2 bg-slate-900/50 rounded-xl border border-slate-700 max-w-xl">
+                  <p className="text-[10px] text-slate-300 whitespace-pre-wrap">{order.description}</p>
+                </div>
+              )}
+            </div>
+          </div>
           <div className="flex items-center gap-4">
              <button onClick={() => setShowResultModal(true)} className="px-6 py-4 bg-slate-700 text-slate-300 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-600 flex items-center gap-2"><MessageSquare size={16}/> Промежуточный итог</button>
              <div className="text-right"><div className="text-[10px] font-black text-slate-500 uppercase mb-1">Готовность (ед.)</div><div className="flex items-center gap-3"><div className="w-32 h-2 bg-slate-700 rounded-full overflow-hidden"><div className="h-full bg-blue-50 transition-all duration-500" style={{ width: `${Math.min(100, progress)}%` }}></div></div><span className="text-lg font-black text-white">{scannedUnits}/{totalUnits || '?'}</span></div></div>
@@ -636,7 +670,7 @@ const ProductionBoard: React.FC<ProductionBoardProps> = ({
                          onUpdateDetails(order.id, task.id, (task.details || []).map(d => d.id === detail.id ? { ...d, quantity: val, scannedBy: currentUser.id } : d));
                        }} className="w-16 bg-slate-900 border border-slate-700 rounded-lg py-1 text-center font-bold" />
                     </td>
-                    <td className="px-10 py-6"><div className="flex items-center gap-2"><div className={`w-6 h-6 rounded-full ${getEmployeeColor(worker?.name || '')} text-white flex items-center justify-center text-[8px] font-bold`}>{worker?.name.charAt(0)}</div><span className="text-xs text-slate-400 font-bold">{worker?.name.split(' ')[0] || '—'}</span></div></td>
+                    <td className="px-10 py-6"><div className="flex items-center gap-2"><div className={`w-6 h-6 rounded-full ${getEmployeeColor(worker?.name || '')} text-white flex items-center justify-center text-[8px] font-bold`}>{worker?.name.charAt(0)}</div><span className="text-xs text-slate-400 font-bold">{worker?.name || '—'}</span></div></td>
                     <td className="px-10 py-6">
                       <div className="flex flex-col gap-1">
                         <span className="text-[10px] font-black uppercase bg-emerald-500 text-white px-3 py-1 rounded-xl w-fit">ГОТОВО</span>
@@ -658,7 +692,7 @@ const ProductionBoard: React.FC<ProductionBoardProps> = ({
                       <tr key={pkg.id} className={`${isShipped ? 'bg-emerald-500/5' : ''}`}>
                         <td className="px-10 py-8 text-white font-bold text-xl">{pkg.name}</td>
                         <td className="px-10 py-8 text-center text-slate-500 font-black">1 / {isShipped ? '1' : '0'}</td>
-                        <td className="px-10 py-8"><div className="flex items-center gap-2"><div className={`w-6 h-6 rounded-full ${getEmployeeColor(worker?.name || '')} text-white flex items-center justify-center text-[8px] font-bold`}>{worker?.name.charAt(0)}</div><span className="text-xs text-slate-400 font-bold">{worker?.name.split(' ')[0] || '—'}</span></div></td>
+                        <td className="px-10 py-8"><div className="flex items-center gap-2"><div className={`w-6 h-6 rounded-full ${getEmployeeColor(worker?.name || '')} text-white flex items-center justify-center text-[8px] font-bold`}>{worker?.name.charAt(0)}</div><span className="text-xs text-slate-400 font-bold">{worker?.name || '—'}</span></div></td>
                         <td className="px-10 py-8"><span className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase ${isShipped ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-600'}`}>{isShipped ? 'ЗАГРУЖЕНО' : 'ОЖИДАНИЕ'}</span></td>
                         <td className="px-10 py-8 text-right font-mono text-xs text-slate-600">{pkg.qr}</td>
                       </tr>
@@ -677,7 +711,7 @@ const ProductionBoard: React.FC<ProductionBoardProps> = ({
                       <tr key={detail.id} className={`${isV ? 'bg-emerald-500/5' : ''}`}>
                         <td className="px-10 py-6"><div className="flex items-center gap-6"><div className={`p-4 rounded-2xl ${isV ? 'bg-emerald-500 text-white' : 'bg-slate-800 text-slate-600'}`}><Hash size={24} /></div><div><div className="text-white font-black text-2xl leading-none">{detail.code}</div></div></div></td>
                         <td className="px-10 py-6 text-center text-white font-black text-xl">{planQty} / <span className={currentScanned < planQty ? 'text-amber-500' : 'text-emerald-500'}>{currentScanned}</span></td>
-                        <td className="px-10 py-6"><div className="flex items-center gap-2"><div className={`w-6 h-6 rounded-full ${getEmployeeColor(worker?.name || '')} text-white flex items-center justify-center text-[8px] font-bold`}>{worker?.name.charAt(0)}</div><span className="text-xs text-slate-400 font-bold">{worker?.name.split(' ')[0] || '—'}</span></div></td>
+                        <td className="px-10 py-6"><div className="flex items-center gap-2"><div className={`w-6 h-6 rounded-full ${getEmployeeColor(worker?.name || '')} text-white flex items-center justify-center text-[8px] font-bold`}>{worker?.name.charAt(0)}</div><span className="text-xs text-slate-400 font-bold">{worker?.name || '—'}</span></div></td>
                         <td className="px-10 py-6">
                            <div className="flex flex-col gap-1">
                               <span className={`text-[11px] font-black uppercase tracking-widest px-4 py-2 rounded-xl w-fit ${isV ? 'bg-emerald-500 text-white' : currentScanned > 0 ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-500'}`}>{isV ? 'ГОТОВО' : currentScanned > 0 ? 'В ПРОЦЕССЕ' : 'ОЖИДАНИЕ'}</span>

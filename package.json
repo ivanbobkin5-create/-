@@ -11,14 +11,18 @@
     "start": "node server.js"
   },
   "dependencies": {
+    "@eslint/js": "^10.0.1",
     "@google/genai": "^1.41.0",
     "cors": "^2.8.5",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^7.0.1",
     "express": "^4.19.2",
     "lucide-react": "^0.564.0",
     "pg": "^8.11.5",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "recharts": "^2.13.0"
+    "recharts": "^2.13.0",
+    "typescript-eslint": "^8.56.1"
   },
   "devDependencies": {
     "@types/react": "^19.0.0",
