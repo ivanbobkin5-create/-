@@ -1,14 +1,15 @@
 
 import React, { useState } from 'react';
-import { Order, TaskStatus } from '../types';
+import { Order, TaskStatus, BitrixConfig } from '../types';
 import { STAGE_CONFIG } from '../constants';
 import { CheckCircle, Search, History, ChevronDown, Package as PackageIcon, Hash } from 'lucide-react';
 
 interface ArchiveProps {
   orders: Order[];
+  bitrixConfig?: BitrixConfig;
 }
 
-const Archive: React.FC<ArchiveProps> = ({ orders }) => {
+const Archive: React.FC<ArchiveProps> = ({ orders, bitrixConfig }) => {
   const [expandedOrder, setExpandedOrder] = useState<string | null>(null);
 
   const completedOrders = orders.filter(order => 
@@ -37,6 +38,22 @@ const Archive: React.FC<ArchiveProps> = ({ orders }) => {
                    <div className="flex items-center gap-2 mb-1">
                       <span className="text-[10px] font-black bg-blue-600 text-white px-2 py-0.5 rounded uppercase">{order.orderNumber}</span>
                       <h3 className="text-lg font-bold text-slate-800">{order.clientName}</h3>
+                      {order.externalId && bitrixConfig?.webhookUrl ? (
+                        <a 
+                          href={`${bitrixConfig.webhookUrl.split('/rest/')[0]}/crm/deal/details/${order.externalId}/`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-1 px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded-md hover:bg-blue-100 transition-all ml-2"
+                          onClick={e => e.stopPropagation()}
+                        >
+                          <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                          <span className="text-[8px] font-black uppercase">B24</span>
+                        </a>
+                      ) : (
+                        <div className="px-1.5 py-0.5 bg-slate-50 text-slate-300 rounded-md opacity-50 ml-2">
+                          <span className="text-[8px] font-black uppercase">B24</span>
+                        </div>
+                      )}
                    </div>
                    <div className="text-xs text-slate-400 font-bold uppercase tracking-widest">Отгружен {new Date(order.tasks.find(t => t.stage === 'SHIPMENT')?.completedAt || '').toLocaleDateString('ru-RU')}</div>
                 </div>

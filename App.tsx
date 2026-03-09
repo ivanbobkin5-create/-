@@ -23,7 +23,7 @@ import LoginPage from './pages/LoginPage';
 import SiteAdmin from './pages/SiteAdmin';
 import Settings from './pages/Settings';
 import { dbService } from './dbService';
-import { NAVIGATION_ITEMS, STAGE_CONFIG } from './constants';
+import { NAVIGATION_ITEMS, STAGE_CONFIG, STAGE_SEQUENCE } from './constants';
 import { Loader2, CheckCircle2, AlertCircle, X, Database } from 'lucide-react';
 
 const STORAGE_KEYS = {
@@ -426,8 +426,9 @@ const App: React.FC = () => {
       let updatedTask: Task | undefined;
       let updatedOrder: Order | undefined;
 
+      // Calculate new state first
       setOrders(prev => {
-        return prev.map(o => {
+        const newOrders = prev.map(o => {
           if (o.id !== orderId) return o;
           const newTasks = o.tasks.map(t => {
             if (t.id !== taskId) return t;
@@ -439,11 +440,13 @@ const App: React.FC = () => {
           updatedOrder = uo;
           return uo;
         });
+        return newOrders;
       });
 
       setIsDirty(true);
 
       // Perform sync outside of setOrders to avoid state issues
+      // We use the captured updatedOrder and updatedTask
       if (bitrixConfig.enabled && updatedOrder && updatedTask) {
         await syncTaskToBitrix(updatedOrder, updatedTask);
       }
@@ -475,6 +478,8 @@ const App: React.FC = () => {
         return 0;
       }
 
+      // 1. Fetch Deals
+      console.log('🔄 Синхронизация с Bitrix24: Запрос сделок для стадий:', triggerStages);
       const response = await fetch('/api/b24-proxy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -492,13 +497,13 @@ const App: React.FC = () => {
       if (!response.ok) throw new Error(data.message || "Ошибка CRM");
       
       const deals = Array.isArray(data.result) ? data.result : [];
-      const updatedOrders = [...orders];
+      console.log(`✅ Найдено сделок в Bitrix24: ${deals.length}`);
       let importedCount = 0;
+      const dealsWithTasks: any[] = [];
 
+      // 2. Fetch Tasks for each deal
       for (const deal of deals) {
         const dealId = String(deal.ID);
-        
-        // Fetch tasks for this deal to sync status
         const tasksResponse = await fetch('/api/b24-proxy', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -513,100 +518,119 @@ const App: React.FC = () => {
         });
         const tasksData = await tasksResponse.json();
         const b24Tasks = Array.isArray(tasksData.result) ? tasksData.result : (tasksData.result?.tasks || []);
-
-        const existingOrderIndex = updatedOrders.findIndex(o => o.externalId === dealId);
-        
-        if (existingOrderIndex !== -1) {
-          // Update existing order tasks status from B24
-          const order = updatedOrders[existingOrderIndex];
-          updatedOrders[existingOrderIndex] = {
-            ...order,
-            tasks: order.tasks.map(t => {
-              const stageConfig = STAGE_CONFIG[t.stage];
-              const stageLabel = stageConfig.label;
-              const keywords = stageConfig.keywords || [stageLabel.toLowerCase()];
-              
-              const b24Task = b24Tasks.find((bt: any) => {
-                const title = (bt.TITLE || '').toLowerCase();
-                return title.includes(stageLabel.toLowerCase()) || keywords.some(k => title.includes(k));
-              });
-
-              if (b24Task) {
-                const b24Status = parseInt(b24Task.REAL_STATUS);
-                const b24Id = String(b24Task.ID || b24Task.id);
-                let newStatus = t.status;
-                if (b24Status >= 4) newStatus = TaskStatus.COMPLETED;
-                else if (b24Status === 3) newStatus = TaskStatus.IN_PROGRESS;
-                
-                return { ...t, externalTaskId: b24Id, status: newStatus };
-              }
-              return t;
-            })
-          };
-        } else {
-          // Create new order
-          const orderId = 'O-' + Math.random().toString(36).substr(2, 9);
-          const newOrder: Order = {
-            id: orderId,
-            externalId: dealId,
-            orderNumber: dealId,
-            clientName: deal.TITLE || 'Без названия',
-            deadline: deal.CLOSEDATE ? deal.CLOSEDATE.split('T')[0] : '',
-            description: deal.ADDITIONAL_INFO || deal.COMMENTS || '',
-            createdAt: new Date().toISOString(),
-            priority: 'MEDIUM',
-            tasks: [
-              ProductionStage.SAWING, 
-              ProductionStage.EDGE_BANDING, 
-              ProductionStage.DRILLING, 
-              ProductionStage.KIT_ASSEMBLY,
-              ProductionStage.PACKAGING, 
-              ProductionStage.SHIPMENT
-            ].map(stage => {
-              const stageConfig = STAGE_CONFIG[stage];
-              const stageLabel = stageConfig.label;
-              const keywords = stageConfig.keywords || [stageLabel.toLowerCase()];
-
-              const b24Task = b24Tasks.find((bt: any) => {
-                const title = (bt.TITLE || '').toLowerCase();
-                return title.includes(stageLabel.toLowerCase()) || keywords.some(k => title.includes(k));
-              });
-
-              const b24Status = b24Task ? parseInt(b24Task.REAL_STATUS) : 2;
-              const b24Id = b24Task ? String(b24Task.ID || b24Task.id) : undefined;
-              
-              let status = TaskStatus.PENDING;
-              if (b24Status >= 4) status = TaskStatus.COMPLETED;
-              else if (b24Status === 3) status = TaskStatus.IN_PROGRESS;
-
-              return {
-                id: 'T-' + Math.random().toString(36).substr(2, 9),
-                orderId: orderId,
-                stage,
-                status,
-                title: deal.TITLE || '',
-                externalTaskId: b24Id
-              };
-            }),
-            companyId: user.companyId
-          };
-          updatedOrders.push(newOrder);
-          importedCount++;
-
-          // Background sync for missing tasks
-          setTimeout(async () => {
-            for (const task of newOrder.tasks) {
-              if (!task.externalTaskId) {
-                await syncTaskToBitrix(newOrder, task);
-                await new Promise(r => setTimeout(r, 500));
-              }
-            }
-          }, 2000);
-        }
+        dealsWithTasks.push({ deal, b24Tasks });
       }
 
-      setOrders(updatedOrders);
+      // 3. Update state using functional update to avoid race conditions
+      console.log('💾 Обновление локального состояния заказов...');
+      let finalOrders: Order[] = [];
+      setOrders(prev => {
+        const updatedOrders = [...prev];
+        
+        dealsWithTasks.forEach(({ deal, b24Tasks }) => {
+          const dealId = String(deal.ID);
+          const existingOrderIndex = updatedOrders.findIndex(o => o.externalId === dealId);
+          
+          if (existingOrderIndex !== -1) {
+            // Update existing order
+            const order = updatedOrders[existingOrderIndex];
+            updatedOrders[existingOrderIndex] = {
+              ...order,
+              tasks: order.tasks.map(t => {
+                const stageConfig = STAGE_CONFIG[t.stage];
+                const stageLabel = stageConfig.label;
+                const keywords = stageConfig.keywords || [stageLabel.toLowerCase()];
+                
+                const b24Task = b24Tasks.find((bt: any) => {
+                  const title = (bt.TITLE || '').toLowerCase();
+                  return title.includes(stageLabel.toLowerCase()) || keywords.some(k => title.includes(k));
+                });
+
+                if (b24Task) {
+                  const b24Status = parseInt(b24Task.REAL_STATUS);
+                  const b24Id = String(b24Task.ID || b24Task.id);
+                  let newStatus = t.status;
+                  if (b24Status >= 4) newStatus = TaskStatus.COMPLETED;
+                  else if (b24Status === 3) newStatus = TaskStatus.IN_PROGRESS;
+                  
+                  return { ...t, externalTaskId: b24Id, status: newStatus };
+                }
+                return t;
+              })
+            };
+          } else {
+            // Create new order
+            const orderId = 'O-' + Math.random().toString(36).substr(2, 9);
+            const newOrder: Order = {
+              id: orderId,
+              externalId: dealId,
+              orderNumber: dealId,
+              clientName: deal.TITLE || 'Без названия',
+              deadline: deal.CLOSEDATE ? deal.CLOSEDATE.split('T')[0] : '',
+              description: deal.ADDITIONAL_INFO || deal.COMMENTS || '',
+              createdAt: new Date().toISOString(),
+              priority: 'MEDIUM',
+              tasks: STAGE_SEQUENCE.map((stage: ProductionStage) => {
+                const stageConfig = STAGE_CONFIG[stage];
+                const stageLabel = stageConfig.label;
+                const keywords = stageConfig.keywords || [stageLabel.toLowerCase()];
+
+                const b24Task = b24Tasks.find((bt: any) => {
+                  const title = (bt.TITLE || '').toLowerCase();
+                  return title.includes(stageLabel.toLowerCase()) || keywords.some((k: string) => title.includes(k));
+                });
+
+                const b24Status = b24Task ? parseInt(b24Task.REAL_STATUS) : 2;
+                const b24Id = b24Task ? String(b24Task.ID || b24Task.id) : undefined;
+                
+                let status = TaskStatus.PENDING;
+                if (b24Status >= 4) status = TaskStatus.COMPLETED;
+                else if (b24Status === 3) status = TaskStatus.IN_PROGRESS;
+
+                return {
+                  id: 'T-' + Math.random().toString(36).substr(2, 9),
+                  orderId: orderId,
+                  stage,
+                  status,
+                  title: deal.TITLE || '',
+                  externalTaskId: b24Id
+                };
+              }),
+              companyId: user.companyId
+            };
+            updatedOrders.push(newOrder);
+            importedCount++;
+          }
+        });
+
+        finalOrders = updatedOrders;
+        return updatedOrders;
+      });
+
       setIsDirty(true);
+      
+      // 4. Background sync for missing tasks in newly imported orders
+      // We do this after the state update to ensure IDs are consistent
+      setTimeout(async () => {
+        const newDeals = dealsWithTasks.filter(({ deal }) => !orders.find(o => o.externalId === String(deal.ID)));
+        if (newDeals.length > 0) {
+          console.log(`🚀 Запуск фонового создания задач для ${newDeals.length} новых сделок...`);
+        }
+        for (const { deal } of newDeals) {
+          const dealId = String(deal.ID);
+          // Find the order in the LATEST state (using a trick or just trusting the state update)
+          // Actually, it's safer to just let the user plan them, but let's try to create them
+          const order = finalOrders.find(o => o.externalId === dealId);
+          if (order) {
+            for (const task of order.tasks) {
+              if (!task.externalTaskId) {
+                await syncTaskToBitrix(order, task);
+                await new Promise(r => setTimeout(r, 300));
+              }
+            }
+          }
+        }
+      }, 1000);
       
       if (importedCount > 0) {
         showToast(`Импортировано ${importedCount} новых сделок`, 'success');
@@ -873,7 +897,7 @@ const App: React.FC = () => {
             setIsDirty(true);
           }} />}
           {currentPage === 'reports' && <Reports orders={myOrders} staff={myStaff} workSessions={mySessions} />}
-          {currentPage === 'archive' && <Archive orders={myOrders} />}
+          {currentPage === 'archive' && <Archive orders={myOrders} bitrixConfig={bitrixConfig} />}
           {currentPage === 'settings' && <Settings config={bitrixConfig} setConfig={c => { 
             setBitrixConfig(c); 
             localStorage.setItem(STORAGE_KEYS.BITRIX_CONFIG, JSON.stringify(c)); 

@@ -147,17 +147,22 @@ const Planning: React.FC<PlanningProps> = ({
                     <div key={task.id} onClick={() => setSelectedTaskId(selectedTaskId?.taskId === task.id ? null : { orderId: task.order.id, taskId: task.id })} className={`p-3 rounded-2xl border cursor-pointer transition-all ${selectedTaskId?.taskId === task.id ? 'bg-blue-600 border-blue-600 text-white shadow-lg' : 'bg-white border-slate-100 hover:border-blue-200'}`}>
                       <div className="flex justify-between items-start gap-2">
                         <div className="font-bold text-xs line-clamp-2 leading-tight">{`${STAGE_CONFIG[task.stage as ProductionStage].label} | ${task.order.clientName}`}</div>
-                        {task.externalTaskId && task.externalTaskId !== 'undefined' && bitrixConfig?.webhookUrl && (
+                        {task.externalTaskId && task.externalTaskId !== 'undefined' && bitrixConfig?.webhookUrl ? (
                           <a 
                             href={`${bitrixConfig.webhookUrl.split('/rest/')[0]}/tasks/task/view/${task.externalTaskId}/`} 
                             target="_blank" 
                             rel="noopener noreferrer"
-                            className={`p-1 rounded-md transition-colors shrink-0 ${selectedTaskId?.taskId === task.id ? 'text-blue-200 hover:text-white hover:bg-blue-500' : 'text-blue-400 hover:text-blue-600 hover:bg-blue-50'}`}
+                            className={`flex items-center gap-1 px-1.5 py-0.5 rounded-md transition-all shrink-0 ${selectedTaskId?.taskId === task.id ? 'bg-white/20 text-white hover:bg-white/30' : 'bg-blue-50 text-blue-600 hover:bg-blue-100'}`}
                             title="Открыть в Битрикс24"
                             onClick={e => e.stopPropagation()}
                           >
+                            <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
                             <span className="text-[8px] font-black uppercase">B24</span>
                           </a>
+                        ) : (
+                          <div className="p-1 opacity-20 grayscale" title="Не привязано к Bitrix24">
+                            <span className="text-[8px] font-black uppercase">B24</span>
+                          </div>
                         )}
                       </div>
                     </div>
@@ -222,17 +227,22 @@ const Planning: React.FC<PlanningProps> = ({
                                   {isOverdue && <span className="flex items-center gap-1 text-[8px] font-black text-rose-600 uppercase mt-1"><Clock size={8}/> ПРОСРОЧЕНО</span>}
                                 </div>
                                 <div className="flex items-center gap-1 shrink-0">
-                                  {task.externalTaskId && task.externalTaskId !== 'undefined' && bitrixConfig?.webhookUrl && (
+                                  {task.externalTaskId && task.externalTaskId !== 'undefined' && bitrixConfig?.webhookUrl ? (
                                     <a 
                                       href={`${bitrixConfig.webhookUrl.split('/rest/')[0]}/tasks/task/view/${task.externalTaskId}/`} 
                                       target="_blank" 
                                       rel="noopener noreferrer"
-                                      className="p-1 text-blue-400 hover:text-blue-600 transition-colors"
+                                      className="flex items-center gap-1 px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded-md hover:bg-blue-100 transition-all"
                                       title="Открыть в Битрикс24"
                                       onClick={e => e.stopPropagation()}
                                     >
+                                      <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
                                       <span className="text-[8px] font-black uppercase">B24</span>
                                     </a>
+                                  ) : (
+                                    <div className="px-1.5 py-0.5 bg-slate-50 text-slate-300 rounded-md opacity-50" title="Не привязано к Bitrix24">
+                                      <span className="text-[8px] font-black uppercase">B24</span>
+                                    </div>
                                   )}
                                   <button onClick={e => { e.stopPropagation(); onUpdateTaskPlanning(task.order.id, task.id, undefined, undefined, []); }} className="p-1 text-slate-300 hover:text-rose-500"><X size={10} /></button>
                                 </div>

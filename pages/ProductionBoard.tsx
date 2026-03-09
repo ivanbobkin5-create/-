@@ -516,6 +516,23 @@ const ProductionBoard: React.FC<ProductionBoardProps> = ({
                 {task.status === TaskStatus.PAUSED && <div className="absolute top-4 right-4 bg-amber-500 text-white px-3 py-1 rounded-xl shadow-lg text-[8px] font-black uppercase">ПАУЗА</div>}
                 <div className="flex justify-between items-start mb-4">
                   <div className="text-[10px] text-slate-400 font-bold uppercase truncate max-w-[100px]">{task.assignee?.name || '—'}</div>
+                  {task.externalTaskId && task.externalTaskId !== 'undefined' && bitrixConfig?.webhookUrl ? (
+                    <a 
+                      href={`${bitrixConfig.webhookUrl.split('/rest/')[0]}/tasks/task/view/${task.externalTaskId}/`} 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1 px-2 py-1 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-all"
+                      title="Открыть в Битрикс24"
+                      onClick={e => e.stopPropagation()}
+                    >
+                      <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
+                      <span className="text-[8px] font-black uppercase tracking-widest">B24</span>
+                    </a>
+                  ) : (
+                    <div className="px-2 py-1 bg-slate-50 text-slate-300 rounded-lg opacity-50" title="Не привязано к Bitrix24">
+                      <span className="text-[8px] font-black uppercase tracking-widest">B24</span>
+                    </div>
+                  )}
                 </div>
                 <h3 className="font-bold text-slate-800 mb-2 leading-snug text-lg">{task.order.clientName}</h3>
                 {task.order.description && (
@@ -589,15 +606,20 @@ const ProductionBoard: React.FC<ProductionBoardProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="text-xl font-bold text-white">{order.clientName}</h2>
-                {task.externalTaskId && task.externalTaskId !== 'undefined' && bitrixConfig?.webhookUrl && (
+                {task.externalTaskId && task.externalTaskId !== 'undefined' && bitrixConfig?.webhookUrl ? (
                   <a 
                     href={`${bitrixConfig.webhookUrl.split('/rest/')[0]}/tasks/task/view/${task.externalTaskId}/`} 
                     target="_blank" 
                     rel="noopener noreferrer"
-                    className="ml-2 px-2 py-1 bg-blue-500/20 text-blue-400 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-blue-500/40 transition-colors"
+                    className="ml-2 flex items-center gap-1 px-2 py-1 bg-blue-500/20 text-blue-400 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-blue-500/40 transition-colors"
                   >
+                    <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
                     B24
                   </a>
+                ) : (
+                  <div className="ml-2 px-2 py-1 bg-slate-700 text-slate-500 rounded-lg text-[10px] font-black uppercase tracking-widest opacity-50">
+                    B24
+                  </div>
                 )}
               </div>
               <div className="text-xs text-slate-400 font-bold uppercase flex items-center gap-2">
