@@ -23,6 +23,8 @@ async function startServer() {
     console.log(`📂 КОРНЕВАЯ ДИРЕКТОРИЯ: ${rootDir}`);
     console.log(`📂 __dirname: ${__dirname}`);
 
+    let serverPublicIP = 'Определяется...';
+
     // Функция для определения внешнего IP сервера
     const fetchPublicIP = () => {
         http.get('http://api.ipify.org', (res) => {
@@ -194,6 +196,41 @@ async function startServer() {
                 'INSERT INTO woodplan_data (company_id, content) VALUES ($1, $2) ON CONFLICT (company_id) DO UPDATE SET content = EXCLUDED.content, updated_at = CURRENT_TIMESTAMP',
                 [companyId, JSON.stringify(payload)]
             );
+
+            // Синхронизируем сотрудников в таблицу woodplan_users для обеспечения входа
+            if (payload.staff && Array.isArray(payload.staff)) {
+                for (const staffMember of payload.staff) {
+                    if (staffMember.email && staffMember.password) {
+                        try {
+                            await pool.query(
+                                `INSERT INTO woodplan_users (id, email, password, name, role, company_id, company_name, is_production, is_production_head) 
+                                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) 
+                                 ON CONFLICT (id) DO UPDATE SET 
+                                    email = EXCLUDED.email,
+                                    password = EXCLUDED.password,
+                                    name = EXCLUDED.name,
+                                    role = EXCLUDED.role,
+                                    is_production = EXCLUDED.is_production,
+                                    is_production_head = EXCLUDED.is_production_head`,
+                                [
+                                    staffMember.id,
+                                    staffMember.email,
+                                    staffMember.password,
+                                    staffMember.name,
+                                    staffMember.role,
+                                    companyId,
+                                    staffMember.companyName || payload.companyName || '',
+                                    staffMember.isProduction || false,
+                                    staffMember.isProductionHead || false
+                                ]
+                            );
+                        } catch (e) {
+                            console.error(`⚠️ Ошибка синхронизации пользователя ${staffMember.email}:`, e.message);
+                        }
+                    }
+                }
+            }
+
             res.json({ success: true });
         } catch (err) {
             res.status(500).json({ success: false, message: err.message });
@@ -351,6 +388,46 @@ async function startServer() {
             }
 
             console.log('✅ Таблицы базы данных проверены/созданы');
+
+            // Одноразовая синхронизация всех пользователей из данных компаний в таблицу woodplan_users
+            // Это гарантирует, что флаг is_production_head и другие данные актуальны для входа
+            const allData = await pool.query('SELECT company_id, content FROM woodplan_data');
+            for (const row of allData.rows) {
+                try {
+                    const content = JSON.parse(row.content);
+                    if (content.staff && Array.isArray(content.staff)) {
+                        for (const staffMember of content.staff) {
+                            if (staffMember.email && staffMember.password) {
+                                await pool.query(
+                                    `INSERT INTO woodplan_users (id, email, password, name, role, company_id, company_name, is_production, is_production_head) 
+                                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) 
+                                     ON CONFLICT (id) DO UPDATE SET 
+                                        is_production_head = EXCLUDED.is_production_head,
+                                        is_production = EXCLUDED.is_production,
+                                        role = EXCLUDED.role,
+                                        name = EXCLUDED.name,
+                                        password = EXCLUDED.password`,
+                                    [
+                                        staffMember.id,
+                                        staffMember.email,
+                                        staffMember.password,
+                                        staffMember.name,
+                                        staffMember.role,
+                                        row.company_id,
+                                        staffMember.companyName || content.companyName || '',
+                                        staffMember.isProduction || false,
+                                        staffMember.isProductionHead || false
+                                    ]
+                                );
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.error(`⚠️ Ошибка фоновой синхронизации для компании ${row.company_id}:`, e.message);
+                }
+            }
+            console.log('✅ Фоновая синхронизация пользователей завершена');
+
         } catch (e) {
             console.error('❌ Ошибка инициализации БД:', e.message);
         }
