@@ -17,26 +17,41 @@ interface SettingsProps {
 
 const Settings: React.FC<SettingsProps> = ({ config, setConfig }) => {
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
-  const [b24Structure, setB24Structure] = useState<{funnels: any[], stages: any[], fields: any[]}>({ funnels: [], stages: [], fields: [] });
+  const [b24Structure, setB24Structure] = useState<{funnels: any[], stages: any[], fields: any[], groups: any[]}>({ funnels: [], stages: [], fields: [], groups: [] });
   const [isLoadingStructure, setIsLoadingStructure] = useState(false);
   const [fieldSearch, setFieldSearch] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [selectedFunnelId, setSelectedFunnelId] = useState<string>("0");
 
-  const safeFetchJson = async (url: string, options: RequestInit) => {
-    const response = await fetch(url, options);
-    const contentType = response.headers.get('content-type');
-    const text = await response.text();
+  const safeFetchJson = async (url: string, options: RequestInit, retries = 5, delay = 1000): Promise<any> => {
+    try {
+      const response = await fetch(url, options);
+      const contentType = response.headers.get('content-type');
+      const text = await response.text();
 
-    if (contentType && contentType.includes('application/json')) {
-      try {
-        return { data: JSON.parse(text), ok: response.ok };
-      } catch (e) {
-        throw new Error(`Ошибка обработки JSON (${response.status}): ${text.substring(0, 50)}...`);
+      if (response.status === 429 && retries > 0) {
+        console.warn(`Rate limit exceeded, retrying in ${delay}ms... (${retries} retries left)`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return safeFetchJson(url, options, retries - 1, delay * 2);
       }
+
+      if (contentType && contentType.includes('application/json')) {
+        try {
+          return { data: JSON.parse(text), ok: response.ok };
+        } catch (e) {
+          throw new Error(`Ошибка обработки JSON (${response.status}): ${text.substring(0, 50)}...`);
+        }
+      }
+      
+      throw new Error(`Сервер вернул некорректный ответ (${response.status}): ${text.substring(0, 50)}...`);
+    } catch (error: any) {
+      if (retries > 0 && (error.message.includes('Rate exceeded') || error.message.includes('429'))) {
+        console.warn(`Rate limit exceeded, retrying in ${delay}ms... (${retries} retries left)`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return safeFetchJson(url, options, retries - 1, delay * 2);
+      }
+      throw error;
     }
-    
-    throw new Error(`Сервер вернул некорректный ответ (${response.status}): ${text.substring(0, 50)}...`);
   };
 
   const fetchMetadata = async () => {
@@ -56,6 +71,7 @@ const Settings: React.FC<SettingsProps> = ({ config, setConfig }) => {
       const funnels = [{ ID: "0", NAME: "Общая воронка" }, ...(funData.result || [])];
 
       // 2. Fetch Stages
+      await new Promise(r => setTimeout(r, 500));
       const { data: stageData, ok: stageOk } = await safeFetchJson('/api/b24-proxy', { 
         method: 'POST', 
         headers: { 'Content-Type': 'application/json' },
@@ -69,6 +85,7 @@ const Settings: React.FC<SettingsProps> = ({ config, setConfig }) => {
       const allStages = (stageData.result || []).filter((s: any) => s.ENTITY_ID.startsWith('DEAL_STAGE'));
 
       // 3. Fetch Fields
+      await new Promise(r => setTimeout(r, 500));
       const { data: fieldsData, ok: fieldsOk } = await safeFetchJson('/api/b24-proxy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -84,20 +101,35 @@ const Settings: React.FC<SettingsProps> = ({ config, setConfig }) => {
       }));
 
       // 4. Fetch Portal Info
+      await new Promise(r => setTimeout(r, 500));
       const { data: userData, ok: userOk } = await safeFetchJson('/api/b24-proxy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: `${baseUrl}/user.current.json`, method: 'POST' })
       });
+      let portalName = config.portalName;
+      let portalLogo = config.portalLogo;
       if (userOk && userData.result) {
-        setConfig({ 
-          ...config, 
-          portalName: userData.result.NAME + ' ' + userData.result.LAST_NAME,
-          portalLogo: userData.result.PERSONAL_PHOTO
-        });
+        portalName = userData.result.NAME + ' ' + userData.result.LAST_NAME;
+        portalLogo = userData.result.PERSONAL_PHOTO;
       }
+
+      // 5. Fetch Groups
+      await new Promise(r => setTimeout(r, 500));
+      const { data: groupsData, ok: groupsOk } = await safeFetchJson('/api/b24-proxy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: `${baseUrl}/sonet_group.get.json`, method: 'POST' })
+      });
+      const groups = groupsOk && Array.isArray(groupsData.result) ? groupsData.result : [];
+
+      setConfig({ 
+        ...config, 
+        portalName,
+        portalLogo
+      });
       
-      setB24Structure({ funnels, stages: allStages, fields });
+      setB24Structure({ funnels, stages: allStages, fields, groups });
     } catch (e: any) {
       console.error("Failed to fetch B24 metadata", e);
       setError(e.message || "Ошибка подключения к Bitrix24");
@@ -220,6 +252,20 @@ const Settings: React.FC<SettingsProps> = ({ config, setConfig }) => {
                        >
                           {b24Structure.funnels.map(f => (
                              <option key={f.ID} value={f.ID}>{f.NAME}</option>
+                          ))}
+                       </select>
+                    </div>
+
+                    <div className="space-y-2">
+                       <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest px-1">Группа для задач (опционально)</label>
+                       <select 
+                          value={config.groupId || ''} 
+                          onChange={e => setConfig({ ...config, groupId: e.target.value })}
+                          className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold outline-none focus:border-blue-500 transition-all"
+                       >
+                          <option value="">Без группы (личные задачи)</option>
+                          {b24Structure.groups.map(g => (
+                             <option key={g.ID} value={g.ID}>{g.NAME}</option>
                           ))}
                        </select>
                     </div>

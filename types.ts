@@ -84,6 +84,7 @@ export interface BitrixConfig {
   chatUrl?: string; 
   selectedFunnelIds: string[];
   triggerStageIds: string[]; 
+  groupId?: string;
   fieldMapping: BitrixFieldMapping;
   portalName?: string;
   portalLogo?: string;

@@ -518,7 +518,7 @@ const ProductionBoard: React.FC<ProductionBoardProps> = ({
                   <div className="text-[10px] text-slate-400 font-bold uppercase truncate max-w-[100px]">{task.assignee?.name || '—'}</div>
                   {task.externalTaskId && task.externalTaskId !== 'undefined' && bitrixConfig?.webhookUrl ? (
                     <a 
-                      href={`${bitrixConfig.webhookUrl.split('/rest/')[0]}/tasks/task/view/${task.externalTaskId}/`} 
+                      href={`${bitrixConfig.webhookUrl.split('/rest/')[0]}/company/personal/user/0/tasks/task/view/${task.externalTaskId}/`} 
                       target="_blank" 
                       rel="noopener noreferrer"
                       className="flex items-center gap-1 px-2 py-1 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-all"
@@ -608,7 +608,7 @@ const ProductionBoard: React.FC<ProductionBoardProps> = ({
                 <h2 className="text-xl font-bold text-white">{order.clientName}</h2>
                 {task.externalTaskId && task.externalTaskId !== 'undefined' && bitrixConfig?.webhookUrl ? (
                   <a 
-                    href={`${bitrixConfig.webhookUrl.split('/rest/')[0]}/tasks/task/view/${task.externalTaskId}/`} 
+                    href={`${bitrixConfig.webhookUrl.split('/rest/')[0]}/company/personal/user/0/tasks/task/view/${task.externalTaskId}/`} 
                     target="_blank" 
                     rel="noopener noreferrer"
                     className="ml-2 flex items-center gap-1 px-2 py-1 bg-blue-500/20 text-blue-400 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-blue-500/40 transition-colors"

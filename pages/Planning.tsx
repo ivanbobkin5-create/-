@@ -15,6 +15,7 @@ interface PlanningProps {
   onAddOrder: (order: Order) => void;
   onSyncBitrix: () => Promise<number>;
   onUpdateTaskPlanning: (orderId: string, taskId: string, date: string | undefined, userId: string | undefined, accompliceIds?: string[]) => void;
+  onCreateB24Task?: (orderId: string, taskId: string) => void;
   onUpdateTaskRate?: (orderId: string, taskId: string, rate: number) => void;
   onUpdateOrderDescription?: (orderId: string, description: string) => void;
   isBitrixEnabled: boolean;
@@ -29,6 +30,7 @@ const Planning: React.FC<PlanningProps> = ({
   onAddOrder, 
   onSyncBitrix, 
   onUpdateTaskPlanning, 
+  onCreateB24Task,
   onUpdateTaskRate, 
   onUpdateOrderDescription,
   isBitrixEnabled, 
@@ -149,7 +151,7 @@ const Planning: React.FC<PlanningProps> = ({
                         <div className="font-bold text-xs line-clamp-2 leading-tight">{`${STAGE_CONFIG[task.stage as ProductionStage].label} | ${task.order.clientName}`}</div>
                         {task.externalTaskId && task.externalTaskId !== 'undefined' && bitrixConfig?.webhookUrl ? (
                           <a 
-                            href={`${bitrixConfig.webhookUrl.split('/rest/')[0]}/tasks/task/view/${task.externalTaskId}/`} 
+                            href={`${bitrixConfig.webhookUrl.split('/rest/')[0]}/company/personal/user/0/tasks/task/view/${task.externalTaskId}/`} 
                             target="_blank" 
                             rel="noopener noreferrer"
                             className={`flex items-center gap-1 px-1.5 py-0.5 rounded-md transition-all shrink-0 ${selectedTaskId?.taskId === task.id ? 'bg-white/20 text-white hover:bg-white/30' : 'bg-blue-50 text-blue-600 hover:bg-blue-100'}`}
@@ -160,9 +162,13 @@ const Planning: React.FC<PlanningProps> = ({
                             <span className="text-[8px] font-black uppercase">B24</span>
                           </a>
                         ) : (
-                          <div className="p-1 opacity-20 grayscale" title="Не привязано к Bitrix24">
+                          <button 
+                            onClick={(e) => { e.stopPropagation(); onCreateB24Task?.(task.order.id, task.id); }}
+                            className={`p-1 transition-all rounded-md flex items-center gap-1 ${selectedTaskId?.taskId === task.id ? 'text-white/50 hover:text-white hover:bg-white/20' : 'text-slate-300 hover:text-blue-500 hover:bg-blue-50'}`} 
+                            title="Создать задачу в Битрикс24"
+                          >
                             <span className="text-[8px] font-black uppercase">B24</span>
-                          </div>
+                          </button>
                         )}
                       </div>
                     </div>
@@ -229,7 +235,7 @@ const Planning: React.FC<PlanningProps> = ({
                                 <div className="flex items-center gap-1 shrink-0">
                                   {task.externalTaskId && task.externalTaskId !== 'undefined' && bitrixConfig?.webhookUrl ? (
                                     <a 
-                                      href={`${bitrixConfig.webhookUrl.split('/rest/')[0]}/tasks/task/view/${task.externalTaskId}/`} 
+                                      href={`${bitrixConfig.webhookUrl.split('/rest/')[0]}/company/personal/user/0/tasks/task/view/${task.externalTaskId}/`} 
                                       target="_blank" 
                                       rel="noopener noreferrer"
                                       className="flex items-center gap-1 px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded-md hover:bg-blue-100 transition-all"
@@ -240,9 +246,13 @@ const Planning: React.FC<PlanningProps> = ({
                                       <span className="text-[8px] font-black uppercase">B24</span>
                                     </a>
                                   ) : (
-                                    <div className="px-1.5 py-0.5 bg-slate-50 text-slate-300 rounded-md opacity-50" title="Не привязано к Bitrix24">
+                                    <button 
+                                      onClick={(e) => { e.stopPropagation(); onCreateB24Task?.(task.order.id, task.id); }}
+                                      className="flex items-center gap-1 px-1.5 py-0.5 bg-slate-50 text-slate-400 rounded-md hover:bg-blue-50 hover:text-blue-600 transition-all" 
+                                      title="Создать задачу в Битрикс24"
+                                    >
                                       <span className="text-[8px] font-black uppercase">B24</span>
-                                    </div>
+                                    </button>
                                   )}
                                   <button onClick={e => { e.stopPropagation(); onUpdateTaskPlanning(task.order.id, task.id, undefined, undefined, []); }} className="p-1 text-slate-300 hover:text-rose-500"><X size={10} /></button>
                                 </div>

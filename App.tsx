@@ -50,6 +50,37 @@ const INITIAL_BITRIX_CONFIG: BitrixConfig = {
   }
 };
 
+const safeFetchJson = async (url: string, options: RequestInit, retries = 5, delay = 1000): Promise<{ data: any, ok: boolean, status: number }> => {
+  try {
+    const response = await fetch(url, options);
+    const contentType = response.headers.get('content-type');
+    const text = await response.text();
+
+    if (response.status === 429 && retries > 0) {
+      console.warn(`Rate limit exceeded, retrying in ${delay}ms... (${retries} retries left)`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+      return safeFetchJson(url, options, retries - 1, delay * 2);
+    }
+
+    if (contentType && contentType.includes('application/json')) {
+      try {
+        return { data: JSON.parse(text), ok: response.ok, status: response.status };
+      } catch (e) {
+        throw new Error(`Ошибка обработки JSON (${response.status}): ${text.substring(0, 50)}...`);
+      }
+    }
+    
+    throw new Error(`Сервер вернул некорректный ответ (${response.status}): ${text.substring(0, 50)}...`);
+  } catch (error: any) {
+    if (retries > 0 && (error.message.includes('Rate exceeded') || error.message.includes('429'))) {
+      console.warn(`Rate limit exceeded, retrying in ${delay}ms... (${retries} retries left)`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+      return safeFetchJson(url, options, retries - 1, delay * 2);
+    }
+    throw error;
+  }
+};
+
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(() => {
     try {
@@ -211,7 +242,7 @@ const App: React.FC = () => {
       }
 
       if (task.externalTaskId) {
-        await fetch('/api/b24-proxy', {
+        await safeFetchJson('/api/b24-proxy', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -231,19 +262,20 @@ const App: React.FC = () => {
         const stageLabel = stageConfig.label;
         const keywords = stageConfig.keywords || [stageLabel.toLowerCase()];
 
-        const listResponse = await fetch('/api/b24-proxy', {
+        const filter: any = { "UF_CRM_TASK": [`D_${order.externalId}`] };
+
+        const { data: listData } = await safeFetchJson('/api/b24-proxy', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             url: `${baseUrl}/tasks.task.list.json`,
             method: 'POST',
             body: {
-              filter: { "UF_CRM_TASK": [`D_${order.externalId}`] },
+              filter,
               select: ["ID", "TITLE"]
             }
           })
         });
-        const listData = await listResponse.json();
         const b24Tasks = Array.isArray(listData.result) ? listData.result : (listData.result?.tasks || []);
         
         const existingTask = b24Tasks.find((bt: any) => {
@@ -253,7 +285,7 @@ const App: React.FC = () => {
 
         if (existingTask) {
           const b24TaskId = String(existingTask.ID || existingTask.id);
-          await fetch('/api/b24-proxy', {
+          await safeFetchJson('/api/b24-proxy', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -273,13 +305,19 @@ const App: React.FC = () => {
           console.log(`Updated existing Bitrix24 task ${b24TaskId} for deal ${order.externalId}`);
           return b24TaskId;
         } else {
-          const createFields = {
+          const createFields: any = {
             ...fields,
             TITLE: taskTitle,
+            DESCRIPTION: `Задача по сделке: ${bitrixConfig.webhookUrl.split('/rest/')[0]}/crm/deal/details/${order.externalId}/`,
             UF_CRM_TASK: [`D_${order.externalId}`],
             RESPONSIBLE_ID: fields.RESPONSIBLE_ID || user?.b24Id
           };
-          const response = await fetch('/api/b24-proxy', {
+          
+          if (bitrixConfig.groupId) {
+            createFields.GROUP_ID = bitrixConfig.groupId;
+          }
+
+          const { data } = await safeFetchJson('/api/b24-proxy', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -288,7 +326,6 @@ const App: React.FC = () => {
               body: { fields: createFields }
             })
           });
-          const data = await response.json();
           if (data.result?.task?.id) {
             const b24TaskId = String(data.result.task.id);
             setOrders(prev => prev.map(o => o.id !== order.id ? o : {
@@ -325,7 +362,7 @@ const App: React.FC = () => {
       if (action === 'complete') method = 'tasks.task.complete.json';
 
       if (method) {
-        await fetch('/api/b24-proxy', {
+        await safeFetchJson('/api/b24-proxy', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -338,7 +375,7 @@ const App: React.FC = () => {
       }
 
       if (comment) {
-        await fetch('/api/b24-proxy', {
+        await safeFetchJson('/api/b24-proxy', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -363,7 +400,7 @@ const App: React.FC = () => {
     if (!bitrixConfig.enabled || !bitrixConfig.webhookUrl) return;
     try {
       const baseUrl = bitrixConfig.webhookUrl.replace(/\/$/, '');
-      await fetch('/api/b24-proxy', {
+      await safeFetchJson('/api/b24-proxy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -452,6 +489,25 @@ const App: React.FC = () => {
       }
     }, [syncTaskToBitrix, bitrixConfig.enabled]);
 
+  const onCreateB24Task = useCallback(async (orderId: string, taskId: string) => {
+    const order = orders.find(o => o.id === orderId);
+    if (!order) return;
+    const task = order.tasks.find(t => t.id === taskId);
+    if (!task) return;
+
+    if (task.externalTaskId && task.externalTaskId !== 'undefined') {
+      window.open(`${bitrixConfig.webhookUrl.split('/rest/')[0]}/company/personal/user/0/tasks/task/view/${task.externalTaskId}/`, '_blank');
+      return;
+    }
+
+    const b24TaskId = await syncTaskToBitrix(order, task);
+    if (b24TaskId) {
+      window.open(`${bitrixConfig.webhookUrl.split('/rest/')[0]}/company/personal/user/0/tasks/task/view/${b24TaskId}/`, '_blank');
+    } else {
+      alert("Не удалось создать или найти задачу в Битрикс24");
+    }
+  }, [orders, syncTaskToBitrix, bitrixConfig.webhookUrl]);
+
   if (dbStatus === 'loading' && user) {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center space-y-6">
@@ -480,7 +536,7 @@ const App: React.FC = () => {
 
       // 1. Fetch Deals
       console.log('🔄 Синхронизация с Bitrix24: Запрос сделок для стадий:', triggerStages);
-      const response = await fetch('/api/b24-proxy', {
+      const { data, ok } = await safeFetchJson('/api/b24-proxy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -493,30 +549,40 @@ const App: React.FC = () => {
         })
       });
 
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || "Ошибка CRM");
+      if (!ok) throw new Error(data.message || "Ошибка CRM");
       
       const deals = Array.isArray(data.result) ? data.result : [];
       console.log(`✅ Найдено сделок в Bitrix24: ${deals.length}`);
+      
+      // Get IDs of all deals found to filter tasks correctly
+      const dealIds = deals.map((d: any) => `D_${d.ID}`);
       let importedCount = 0;
       const dealsWithTasks: any[] = [];
 
-      // 2. Fetch Tasks for each deal
+      // 2. Fetch Tasks for all deals at once if possible, or filtered by deal IDs
+      // The current implementation fetches tasks deal by deal, which is fine with rate limiting.
+      // The issue is that it fetches tasks for ALL deals, not just those in selected stages.
+      // Actually, the filter UF_CRM_TASK is correct, but we need to ensure we only process tasks
+      // that belong to the deals we just fetched.
+      
       for (const deal of deals) {
+        await new Promise(resolve => setTimeout(resolve, 500)); // Rate limit protection
         const dealId = String(deal.ID);
-        const tasksResponse = await fetch('/api/b24-proxy', {
+        // Filter tasks that are linked to this specific deal
+        const filter: any = { "UF_CRM_TASK": [`D_${dealId}`] };
+
+        const { data: tasksData } = await safeFetchJson('/api/b24-proxy', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             url: `${baseUrl}/tasks.task.list.json`,
             method: 'POST',
             body: {
-              filter: { "UF_CRM_TASK": [`D_${dealId}`] },
-              select: ["ID", "TITLE", "REAL_STATUS"]
+              filter,
+              select: ["ID", "TITLE", "REAL_STATUS", "UF_CRM_TASK"]
             }
           })
         });
-        const tasksData = await tasksResponse.json();
         const b24Tasks = Array.isArray(tasksData.result) ? tasksData.result : (tasksData.result?.tasks || []);
         dealsWithTasks.push({ deal, b24Tasks });
       }
@@ -543,7 +609,13 @@ const App: React.FC = () => {
                 
                 const b24Task = b24Tasks.find((bt: any) => {
                   const title = (bt.TITLE || '').toLowerCase();
-                  return title.includes(stageLabel.toLowerCase()) || keywords.some(k => title.includes(k));
+                  // Check if task is linked to this deal AND matches stage keywords
+                  const isLinkedToDeal = bt.UF_CRM_TASK && bt.UF_CRM_TASK.includes(`D_${deal.ID}`);
+                  const matchesKeyword = keywords.some(k => title.includes(k.toLowerCase()));
+                  if (isLinkedToDeal && matchesKeyword) {
+                    console.log(`DEBUG: Existing Order Task ${bt.ID} matched for Deal ${deal.ID}:`, title, bt.UF_CRM_TASK);
+                  }
+                  return isLinkedToDeal && matchesKeyword;
                 });
 
                 if (b24Task) {
@@ -577,7 +649,13 @@ const App: React.FC = () => {
 
                 const b24Task = b24Tasks.find((bt: any) => {
                   const title = (bt.TITLE || '').toLowerCase();
-                  return title.includes(stageLabel.toLowerCase()) || keywords.some((k: string) => title.includes(k));
+                  // Check if task is linked to this deal AND matches stage keywords
+                  const isLinkedToDeal = bt.UF_CRM_TASK && bt.UF_CRM_TASK.includes(`D_${deal.ID}`);
+                  const matchesKeyword = keywords.some(k => title.includes(k.toLowerCase()));
+                  if (isLinkedToDeal && matchesKeyword) {
+                    console.log(`DEBUG: New Order Task ${bt.ID} matched for Deal ${deal.ID}:`, title, bt.UF_CRM_TASK);
+                  }
+                  return isLinkedToDeal && matchesKeyword;
                 });
 
                 const b24Status = b24Task ? parseInt(b24Task.REAL_STATUS) : 2;
@@ -652,7 +730,7 @@ const App: React.FC = () => {
     setIsSyncing(true);
     try {
       const baseUrl = bitrixConfig.webhookUrl.replace(/\/$/, '');
-      const response = await fetch('/api/b24-proxy', {
+      const { data, ok } = await safeFetchJson('/api/b24-proxy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -664,16 +742,8 @@ const App: React.FC = () => {
         })
       });
 
-      const contentType = response.headers.get('content-type');
-      const text = await response.text();
-
-      if (!contentType || !contentType.includes('application/json')) {
-        throw new Error("Некорректный ответ сервера");
-      }
-
-      const data = JSON.parse(text);
-      if (!response.ok) {
-        const errMsg = data.message || data.error_description || `Ошибка Bitrix24 (${response.status})`;
+      if (!ok) {
+        const errMsg = data.message || data.error_description || `Ошибка Bitrix24`;
         throw new Error(errMsg);
       }
 
@@ -851,6 +921,7 @@ const App: React.FC = () => {
               }} 
               onSyncBitrix={onSyncBitrix} 
               onUpdateTaskPlanning={onUpdateTaskPlanning} 
+              onCreateB24Task={onCreateB24Task}
               onUpdateOrderDescription={(oid, desc) => {
                 setOrders(prev => prev.map(o => o.id === oid ? { ...o, description: desc } : o));
                 setIsDirty(true);

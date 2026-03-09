@@ -30,12 +30,12 @@ export const STAGE_SEQUENCE = [
 ];
 
 export const STAGE_CONFIG = {
-  [ProductionStage.SAWING]: { label: 'Распил', icon: <Disc size={20} />, color: 'bg-blue-500', keywords: ['распил', 'пиление'] },
-  [ProductionStage.EDGE_BANDING]: { label: 'Кромка', icon: <Layers size={20} />, color: 'bg-indigo-500', keywords: ['кромка', 'кромление', 'кромить'] },
-  [ProductionStage.DRILLING]: { label: 'Присадка', icon: <Target size={20} />, color: 'bg-cyan-500', keywords: ['присадка', 'сверление', 'сверлить'] },
-  [ProductionStage.KIT_ASSEMBLY]: { label: 'Комплектация', icon: <PackageCheck size={20} />, color: 'bg-emerald-500', keywords: ['комплектация', 'укомплектовать'] },
-  [ProductionStage.PACKAGING]: { label: 'Упаковка', icon: <Box size={20} />, color: 'bg-amber-500', keywords: ['упаковка', 'упаковать'] },
-  [ProductionStage.SHIPMENT]: { label: 'Отгрузка', icon: <Truck size={20} />, color: 'bg-rose-500', keywords: ['отгрузка', 'отгрузить'] },
+  [ProductionStage.SAWING]: { label: 'Распил', icon: <Disc size={20} />, color: 'bg-blue-500', keywords: ['распил'] },
+  [ProductionStage.EDGE_BANDING]: { label: 'Кромка', icon: <Layers size={20} />, color: 'bg-indigo-500', keywords: ['кромка', 'кромить'] },
+  [ProductionStage.DRILLING]: { label: 'Присадка', icon: <Target size={20} />, color: 'bg-cyan-500', keywords: ['присадка', 'сверлить'] },
+  [ProductionStage.KIT_ASSEMBLY]: { label: 'Комплектация', icon: <PackageCheck size={20} />, color: 'bg-emerald-500', keywords: ['комплектация'] },
+  [ProductionStage.PACKAGING]: { label: 'Упаковка', icon: <Box size={20} />, color: 'bg-amber-500', keywords: ['упаковка'] },
+  [ProductionStage.SHIPMENT]: { label: 'Отгрузка', icon: <Truck size={20} />, color: 'bg-rose-500', keywords: ['отгрузка'] },
 };
 
 export const NAVIGATION_ITEMS = [
