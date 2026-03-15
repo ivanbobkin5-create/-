@@ -37,6 +37,8 @@ const ProductionBoard: React.FC<ProductionBoardProps> = ({
   const [activePackageId, setActivePackageId] = useState<string | null>(null);
   const [showResultModal, setShowResultModal] = useState(false);
   const [resultComment, setResultComment] = useState('');
+  const [driverNameModal, setDriverNameModal] = useState(false);
+  const [driverName, setDriverName] = useState('');
   const [newPackageName, setNewPackageName] = useState('');
   const [viewPackage, setViewPackage] = useState<Package | null>(null);
   
@@ -426,14 +428,23 @@ const ProductionBoard: React.FC<ProductionBoardProps> = ({
        return;
     }
 
-    if (task.stage !== ProductionStage.KIT_ASSEMBLY && scannedTotal < planTotal) {
-       const missing = planTotal - scannedTotal;
-       if (!window.confirm(`Внимание: не хватает ${missing} ед. деталей. Всё равно завершить этап?`)) return;
-       onUpdateTask(order.id, task.id, TaskStatus.COMPLETED, `ВНИМАНИЕ: Задача завершена с нехваткой ${missing} ед. деталей.`);
-    } else {
-       onUpdateTask(order.id, task.id, TaskStatus.COMPLETED, `Задача завершена в полном объеме.`);
+    if (task.stage === ProductionStage.SHIPMENT) {
+      setDriverNameModal(true);
+      return;
     }
 
+    let comment = `Задача завершена в полном объеме.`;
+    if (task.stage === ProductionStage.SAWING || task.stage === ProductionStage.EDGE_BANDING) {
+      const registered = (task.details || []).reduce((sum, d) => sum + (d.quantity || 0), 0);
+      const returns = (task.details || []).filter(d => d.returnAfterEdge).map(d => d.code).join(', ');
+      comment = `Зарегистрировано деталей: ${registered}. К возврат: ${returns || 'нет'}`;
+    } else if (scannedTotal < planTotal) {
+       const missing = planTotal - scannedTotal;
+       if (!window.confirm(`Внимание: не хватает ${missing} ед. деталей. Всё равно завершить этап?`)) return;
+       comment = `ВНИМАНИЕ: Задача завершена с нехваткой ${missing} ед. деталей.`;
+    }
+
+    onUpdateTask(order.id, task.id, TaskStatus.COMPLETED, comment);
     setSelectedTaskIds(null);
   };
 
@@ -840,6 +851,41 @@ const ProductionBoard: React.FC<ProductionBoardProps> = ({
                  </div>
               </div>
            </div>
+        )}
+        {driverNameModal && (
+          <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+            <div className="bg-white rounded-3xl w-full max-w-sm shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
+              <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                <h3 className="font-bold text-slate-800 flex items-center gap-2">Водитель</h3>
+                <button onClick={() => setDriverNameModal(false)} className="p-2 hover:bg-white rounded-xl transition-colors"><X size={20} className="text-slate-400" /></button>
+              </div>
+              <div className="p-6 space-y-4">
+                <input
+                  type="text"
+                  value={driverName}
+                  onChange={(e) => setDriverName(e.target.value)}
+                  className="w-full p-4 rounded-2xl border border-slate-200 focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all text-sm"
+                  placeholder="Введите имя водителя..."
+                  autoFocus
+                />
+                <div className="flex gap-3">
+                  <button onClick={() => setDriverNameModal(false)} className="flex-1 py-3 px-4 rounded-2xl font-bold text-slate-600 hover:bg-slate-50 transition-colors">Отмена</button>
+                  <button 
+                    onClick={() => {
+                      if (!activeSelection || !driverName) return;
+                      onUpdateTask(activeSelection.order.id, activeSelection.task.id, TaskStatus.COMPLETED, `Отгрузка выполнена. Водитель: ${driverName}`);
+                      setDriverNameModal(false);
+                      setDriverName('');
+                      setSelectedTaskIds(null);
+                    }}
+                    className="flex-1 py-3 px-4 rounded-2xl font-bold bg-blue-600 text-white hover:bg-blue-700 shadow-lg shadow-blue-500/20 transition-all"
+                  >
+                    Завершить
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     );

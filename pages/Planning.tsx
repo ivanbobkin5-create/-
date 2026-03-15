@@ -8,14 +8,14 @@ import {
   X, Check, Plus, Factory, ChevronDown, Coins, UserPlus, AlertCircle, Clock
 } from 'lucide-react';
 
-type GroupingMode = 'stage' | 'deal';
+
 
 interface PlanningProps {
   orders: Order[];
-  onAddOrder: (order: Order) => void;
   onSyncBitrix: () => Promise<number>;
   onUpdateTaskPlanning: (orderId: string, taskId: string, date: string | undefined, userId: string | undefined, accompliceIds?: string[]) => void;
   onCreateB24Task?: (orderId: string, taskId: string) => void;
+  onDeleteTask?: (orderId: string, taskId: string) => void;
   onUpdateTaskRate?: (orderId: string, taskId: string, rate: number) => void;
   onUpdateOrderDescription?: (orderId: string, description: string) => void;
   isBitrixEnabled: boolean;
@@ -27,10 +27,10 @@ interface PlanningProps {
 
 const Planning: React.FC<PlanningProps> = ({ 
   orders, 
-  onAddOrder, 
   onSyncBitrix, 
   onUpdateTaskPlanning, 
   onCreateB24Task,
+  onDeleteTask,
   onUpdateTaskRate, 
   onUpdateOrderDescription,
   isBitrixEnabled, 
@@ -43,19 +43,13 @@ const Planning: React.FC<PlanningProps> = ({
   const [selectedTaskId, setSelectedTaskId] = useState<{orderId: string, taskId: string} | null>(null);
   const [inboxSearch, setInboxSearch] = useState('');
   const [isSyncing, setIsSyncing] = useState(false);
-  const [isOrderModalOpen, setIsOrderModalOpen] = useState(false);
-  const [newOrder, setNewOrder] = useState({
-    number: '', client: '', deadline: '', priority: 'MEDIUM' as 'LOW' | 'MEDIUM' | 'HIGH',
-    stages: [ProductionStage.SAWING, ProductionStage.EDGE_BANDING, ProductionStage.DRILLING, ProductionStage.PACKAGING, ProductionStage.SHIPMENT] as ProductionStage[],
-    detailsInput: ''
-  });
 
   const [assigneeMenu, setAssigneeMenu] = useState<{orderId: string, taskId: string, type: 'main' | 'support', date?: string} | null>(null);
   const [rateMenu, setRateMenu] = useState<{orderId: string, taskId: string, currentRate: number} | null>(null);
   const [descriptionMenu, setDescriptionMenu] = useState<{orderId: string, description: string} | null>(null);
   const [tempDescription, setTempDescription] = useState<string>('');
   const [tempRate, setTempRate] = useState<string>('');
-  const [groupingMode, setGroupingMode] = useState<GroupingMode>(() => (localStorage.getItem('woodplan_grouping') as GroupingMode) || 'stage');
+
   const [expandedGroups, setExpandedGroups] = useState<string[]>([]);
 
   const weekDays = useMemo(() => {
@@ -76,12 +70,6 @@ const Planning: React.FC<PlanningProps> = ({
     orders.forEach(order => {
       if (order.tasks.find(t => t.stage === ProductionStage.SHIPMENT)?.status === TaskStatus.COMPLETED) return;
       
-      if (order.source === 'BITRIX24' && bitrixConfig?.triggerStageIds?.length) {
-        if (!order.externalStageId || !bitrixConfig.triggerStageIds.includes(order.externalStageId)) {
-          return;
-        }
-      }
-
       order.tasks.forEach(task => {
         if (!task.plannedDate && task.status !== TaskStatus.COMPLETED) {
           const s = inboxSearch.toLowerCase();
@@ -90,16 +78,26 @@ const Planning: React.FC<PlanningProps> = ({
       });
     });
     const groups: Record<string, any> = {};
-    if (groupingMode === 'stage') {
-      STAGE_SEQUENCE.forEach(stage => groups[stage] = { label: STAGE_CONFIG[stage].label, icon: STAGE_CONFIG[stage].icon, tasks: list.filter(t => t.stage === stage) });
-    } else {
-      list.forEach(item => {
-        if (!groups[item.order.id]) groups[item.order.id] = { label: `${item.order.clientName}`, icon: <Factory size={16} />, tasks: [] };
-        groups[item.order.id].tasks.push(item);
-      });
+    list.forEach(item => {
+      const dealUrl = item.order.externalId && bitrixConfig?.webhookUrl 
+      ? `${bitrixConfig.webhookUrl.split('/rest/')[0]}/crm/deal/details/${item.order.externalId}/` 
+      : null;
+
+    if (!groups[item.order.id]) {
+      groups[item.order.id] = { 
+        label: `${item.order.clientName}`, 
+        icon: dealUrl ? (
+          <a href={dealUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800">
+            <span className="text-[10px] font-black uppercase">B24</span>
+          </a>
+        ) : <Factory size={16} />, 
+        tasks: [] 
+      };
     }
+      groups[item.order.id].tasks.push(item);
+    });
     return Object.entries(groups).filter(([_, g]: any) => g.tasks.length > 0);
-  }, [orders, groupingMode, inboxSearch]);
+  }, [orders, inboxSearch]);
 
   const scheduledTasks = useMemo(() => {
     const weekMap: Record<string, Record<string, (Task & { order: Order })[]>> = {};
@@ -128,13 +126,9 @@ const Planning: React.FC<PlanningProps> = ({
             <h3 className="font-bold text-slate-800 flex items-center gap-2"><Inbox size={18} className="text-blue-600"/> Входящие</h3>
             <div className="flex gap-2">
                {isBitrixEnabled && <button onClick={async () => { setIsSyncing(true); await onSyncBitrix(); setIsSyncing(false); }} className={`p-2 bg-blue-50 text-blue-600 rounded-xl ${isSyncing ? 'animate-spin' : ''}`}><RefreshCw size={18} /></button>}
-               <button onClick={() => setIsOrderModalOpen(true)} className="p-2 bg-blue-600 text-white rounded-xl shadow-lg"><Plus size={18} /></button>
             </div>
           </div>
-          <div className="flex bg-slate-100 p-1 rounded-xl">
-             <button onClick={() => setGroupingMode('stage')} className={`flex-1 py-1 rounded-lg text-[10px] font-black uppercase ${groupingMode === 'stage' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}>Участки</button>
-             <button onClick={() => setGroupingMode('deal')} className={`flex-1 py-1 rounded-lg text-[10px] font-black uppercase ${groupingMode === 'deal' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}>Сделки</button>
-          </div>
+          {/* Removed grouping toggle */}
         </div>
         <div className="flex-1 overflow-y-auto p-4 custom-scrollbar space-y-2">
           {groupedInboxTasks.map(([groupId, group]: any) => (
@@ -148,7 +142,7 @@ const Planning: React.FC<PlanningProps> = ({
                   {group.tasks.map((task: any) => (
                     <div key={task.id} onClick={() => setSelectedTaskId(selectedTaskId?.taskId === task.id ? null : { orderId: task.order.id, taskId: task.id })} className={`p-3 rounded-2xl border cursor-pointer transition-all ${selectedTaskId?.taskId === task.id ? 'bg-blue-600 border-blue-600 text-white shadow-lg' : 'bg-white border-slate-100 hover:border-blue-200'}`}>
                       <div className="flex justify-between items-start gap-2">
-                        <div className="font-bold text-xs line-clamp-2 leading-tight">{`${STAGE_CONFIG[task.stage as ProductionStage].label} | ${task.order.clientName}`}</div>
+                        <div className="font-bold text-xs line-clamp-2 leading-tight">{task.title || 'Без названия'}</div>
                         {task.externalTaskId && task.externalTaskId !== 'undefined' && bitrixConfig?.webhookUrl ? (
                           <a 
                             href={`${bitrixConfig.webhookUrl.split('/rest/')[0]}/company/personal/user/0/tasks/task/view/${task.externalTaskId}/`} 
@@ -163,11 +157,11 @@ const Planning: React.FC<PlanningProps> = ({
                           </a>
                         ) : (
                           <button 
-                            onClick={(e) => { e.stopPropagation(); onCreateB24Task?.(task.order.id, task.id); }}
-                            className={`p-1 transition-all rounded-md flex items-center gap-1 ${selectedTaskId?.taskId === task.id ? 'text-white/50 hover:text-white hover:bg-white/20' : 'text-slate-300 hover:text-blue-500 hover:bg-blue-50'}`} 
-                            title="Создать задачу в Битрикс24"
+                            onClick={(e) => { e.stopPropagation(); onDeleteTask?.(task.order.id, task.id); }}
+                            className={`p-1 transition-all rounded-md flex items-center gap-1 ${selectedTaskId?.taskId === task.id ? 'text-white/50 hover:text-white hover:bg-white/20' : 'text-slate-300 hover:text-red-500 hover:bg-red-50'}`} 
+                            title="Удалить задачу"
                           >
-                            <span className="text-[8px] font-black uppercase">B24</span>
+                            <X size={12} />
                           </button>
                         )}
                       </div>
@@ -233,7 +227,7 @@ const Planning: React.FC<PlanningProps> = ({
                                   {isOverdue && <span className="flex items-center gap-1 text-[8px] font-black text-rose-600 uppercase mt-1"><Clock size={8}/> ПРОСРОЧЕНО</span>}
                                 </div>
                                 <div className="flex items-center gap-1 shrink-0">
-                                  {task.externalTaskId && task.externalTaskId !== 'undefined' && bitrixConfig?.webhookUrl ? (
+                                  {task.externalTaskId && task.externalTaskId !== 'undefined' && bitrixConfig?.webhookUrl && (
                                     <a 
                                       href={`${bitrixConfig.webhookUrl.split('/rest/')[0]}/company/personal/user/0/tasks/task/view/${task.externalTaskId}/`} 
                                       target="_blank" 
@@ -245,16 +239,14 @@ const Planning: React.FC<PlanningProps> = ({
                                       <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
                                       <span className="text-[8px] font-black uppercase">B24</span>
                                     </a>
-                                  ) : (
-                                    <button 
-                                      onClick={(e) => { e.stopPropagation(); onCreateB24Task?.(task.order.id, task.id); }}
-                                      className="flex items-center gap-1 px-1.5 py-0.5 bg-slate-50 text-slate-400 rounded-md hover:bg-blue-50 hover:text-blue-600 transition-all" 
-                                      title="Создать задачу в Битрикс24"
-                                    >
-                                      <span className="text-[8px] font-black uppercase">B24</span>
-                                    </button>
                                   )}
-                                  <button onClick={e => { e.stopPropagation(); onUpdateTaskPlanning(task.order.id, task.id, undefined, undefined, []); }} className="p-1 text-slate-300 hover:text-rose-500"><X size={10} /></button>
+                                  <button 
+                                    onClick={e => { e.stopPropagation(); onUpdateTaskPlanning(task.order.id, task.id, undefined, undefined, []); }} 
+                                    className="p-1 text-slate-300 hover:text-rose-500 transition-colors"
+                                    title="Убрать из плана"
+                                  >
+                                    <X size={10} />
+                                  </button>
                                 </div>
                               </div>
                               <div className="mt-auto space-y-2">
@@ -425,6 +417,8 @@ const Planning: React.FC<PlanningProps> = ({
           </div>
         </div>
       )}
+
+      {/* Add Order Modal */}
     </div>
   );
 };

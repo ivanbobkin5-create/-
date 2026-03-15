@@ -23,7 +23,7 @@ const Settings: React.FC<SettingsProps> = ({ config, setConfig }) => {
   const [error, setError] = useState<string | null>(null);
   const [selectedFunnelId, setSelectedFunnelId] = useState<string>("0");
 
-  const safeFetchJson = async (url: string, options: RequestInit, retries = 5, delay = 1000): Promise<any> => {
+  const safeFetchJson = async (url: string, options: RequestInit, retries = 5, delay = 2000): Promise<any> => {
     try {
       const response = await fetch(url, options);
       const contentType = response.headers.get('content-type');
@@ -43,10 +43,14 @@ const Settings: React.FC<SettingsProps> = ({ config, setConfig }) => {
         }
       }
       
-      throw new Error(`Сервер вернул некорректный ответ (${response.status}): ${text.substring(0, 50)}...`);
+      if (!response.ok) {
+        throw new Error(`Сервер вернул ошибку (${response.status}): ${text.substring(0, 100)}...`);
+      }
+
+      return { data: text, ok: response.ok };
     } catch (error: any) {
-      if (retries > 0 && (error.message.includes('Rate exceeded') || error.message.includes('429'))) {
-        console.warn(`Rate limit exceeded, retrying in ${delay}ms... (${retries} retries left)`);
+      if (retries > 0) {
+        console.warn(`Fetch error, retrying in ${delay}ms... (${retries} retries left)`, error);
         await new Promise(resolve => setTimeout(resolve, delay));
         return safeFetchJson(url, options, retries - 1, delay * 2);
       }

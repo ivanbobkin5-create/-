@@ -16,7 +16,8 @@ import {
   BarChart3,
   Wallet,
   MessageSquare,
-  CalendarDays
+  CalendarDays,
+  Package
 } from 'lucide-react';
 import { ProductionStage, UserRole } from './types';
 
@@ -25,16 +26,18 @@ export const STAGE_SEQUENCE = [
   ProductionStage.EDGE_BANDING,
   ProductionStage.DRILLING,
   ProductionStage.KIT_ASSEMBLY,
+  ProductionStage.ASSEMBLY,
   ProductionStage.PACKAGING,
   ProductionStage.SHIPMENT
 ];
 
 export const STAGE_CONFIG = {
   [ProductionStage.SAWING]: { label: 'Распил', icon: <Disc size={20} />, color: 'bg-blue-500', keywords: ['распил'] },
-  [ProductionStage.EDGE_BANDING]: { label: 'Кромка', icon: <Layers size={20} />, color: 'bg-indigo-500', keywords: ['кромка', 'кромить'] },
-  [ProductionStage.DRILLING]: { label: 'Присадка', icon: <Target size={20} />, color: 'bg-cyan-500', keywords: ['присадка', 'сверлить'] },
+  [ProductionStage.EDGE_BANDING]: { label: 'Кромка', icon: <Layers size={20} />, color: 'bg-indigo-500', keywords: ['кром', 'кромить'] },
+  [ProductionStage.DRILLING]: { label: 'Присадка', icon: <Target size={20} />, color: 'bg-cyan-500', keywords: ['присад', 'сверлить'] },
   [ProductionStage.KIT_ASSEMBLY]: { label: 'Комплектация', icon: <PackageCheck size={20} />, color: 'bg-emerald-500', keywords: ['комплектация'] },
-  [ProductionStage.PACKAGING]: { label: 'Упаковка', icon: <Box size={20} />, color: 'bg-amber-500', keywords: ['упаковка'] },
+  [ProductionStage.ASSEMBLY]: { label: 'Сборка', icon: <Box size={20} />, color: 'bg-purple-500', keywords: ['сборка'] },
+  [ProductionStage.PACKAGING]: { label: 'Упаковка', icon: <Package size={20} />, color: 'bg-amber-500', keywords: ['упаковка'] },
   [ProductionStage.SHIPMENT]: { label: 'Отгрузка', icon: <Truck size={20} />, color: 'bg-rose-500', keywords: ['отгрузка'] },
 };
 

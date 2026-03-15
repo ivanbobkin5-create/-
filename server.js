@@ -254,7 +254,12 @@ async function startServer() {
 
     app.post('/api/b24-proxy', async (req, res) => {
         const { url, method, body } = req.body;
-        if (!url) return res.status(400).json({ success: false, message: "Missing URL" });
+        console.log(`DEBUG: [B24 Proxy] Request to: ${url} (${method || 'POST'})`);
+        
+        if (!url) {
+            console.error('DEBUG: [B24 Proxy] Missing URL in request body');
+            return res.status(400).json({ success: false, message: "Missing URL" });
+        }
 
         try {
             const response = await fetch(url, {
@@ -266,12 +271,14 @@ async function startServer() {
             const contentType = response.headers.get('content-type');
             const text = await response.text();
             
+            console.log(`DEBUG: [B24 Proxy] Response from ${url}: Status ${response.status}`);
+
             if (contentType && contentType.includes('application/json')) {
                 try {
                     const data = JSON.parse(text);
                     res.status(response.status).json(data);
                 } catch (e) {
-                    console.error('❌ B24 Proxy JSON Parse Error:', text.substring(0, 200));
+                    console.error('❌ [B24 Proxy] JSON Parse Error:', text.substring(0, 200));
                     res.status(response.status).json({ 
                         success: false, 
                         message: `Bitrix24 returned invalid JSON (${response.status})`,
@@ -279,7 +286,7 @@ async function startServer() {
                     });
                 }
             } else {
-                console.error('❌ B24 Proxy Non-JSON Response:', text.substring(0, 200));
+                console.error('❌ [B24 Proxy] Non-JSON Response:', text.substring(0, 200));
                 res.status(response.status).json({ 
                     success: false, 
                     message: response.status === 429 ? "Превышен лимит запросов к Bitrix24 (Rate Limit)" : `Bitrix24 вернул некорректный ответ (${response.status})`,
@@ -287,7 +294,7 @@ async function startServer() {
                 });
             }
         } catch (err) {
-            console.error('❌ B24 Proxy Error:', err);
+            console.error('❌ [B24 Proxy] Error:', err);
             res.status(500).json({ success: false, message: err.message });
         }
     });

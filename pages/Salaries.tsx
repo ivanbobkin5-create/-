@@ -104,6 +104,11 @@ const Salaries: React.FC<{orders: Order[], staff: User[], bitrixConfig?: BitrixC
     });
 
     return results
+      .filter(s => {
+        const inStaff = staff.some(member => member.id === s.id);
+        const hasShifts = s.workedShiftsCount > 0;
+        return inStaff && hasShifts;
+      })
       .filter(s => s.name.toLowerCase().includes(searchTerm.toLowerCase()))
       .sort((a, b) => b.totalEarned - a.totalEarned);
   }, [orders, staff, selectedMonth, selectedYear, searchTerm]);

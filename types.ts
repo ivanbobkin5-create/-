@@ -10,8 +10,9 @@ export enum ProductionStage {
   EDGE_BANDING = 'EDGE_BANDING', 
   DRILLING = 'DRILLING', 
   KIT_ASSEMBLY = 'KIT_ASSEMBLY', 
+  ASSEMBLY = 'ASSEMBLY',
   PACKAGING = 'PACKAGING', 
-  SHIPMENT = 'SHIPMENT' 
+  SHIPMENT = 'SHIPMENT'
 }
 
 export enum TaskStatus {

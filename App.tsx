@@ -50,8 +50,9 @@ const INITIAL_BITRIX_CONFIG: BitrixConfig = {
   }
 };
 
-const safeFetchJson = async (url: string, options: RequestInit, retries = 5, delay = 1000): Promise<{ data: any, ok: boolean, status: number }> => {
+const safeFetchJson = async (url: string, options: RequestInit, retries = 5, delay = 3000): Promise<{ data: any, ok: boolean, status: number }> => {
   try {
+    console.log(`DEBUG: Fetching ${url} with options:`, options);
     const response = await fetch(url, options);
     const contentType = response.headers.get('content-type');
     const text = await response.text();
@@ -62,23 +63,70 @@ const safeFetchJson = async (url: string, options: RequestInit, retries = 5, del
       return safeFetchJson(url, options, retries - 1, delay * 2);
     }
 
+    if (!response.ok) {
+      console.error(`DEBUG: Fetch failed for ${url} with status ${response.status}. Response: ${text}`);
+    }
+
     if (contentType && contentType.includes('application/json')) {
       try {
         return { data: JSON.parse(text), ok: response.ok, status: response.status };
       } catch (e) {
+        console.error(`DEBUG: JSON parse error for ${url}. Text: ${text}`);
         throw new Error(`Ошибка обработки JSON (${response.status}): ${text.substring(0, 50)}...`);
       }
     }
+    return { data: text, ok: response.ok, status: response.status };
+  } catch (e: any) {
+    console.error(`DEBUG: Fetch exception for ${url}:`, e);
+    // Handle "Failed to fetch" which is usually a network error or CORS issue
+    if (e.name === 'TypeError' && e.message === 'Failed to fetch') {
+      if (retries > 0) {
+        console.warn(`Network error (Failed to fetch), retrying in ${delay}ms... (${retries} retries left)`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return safeFetchJson(url, options, retries - 1, delay * 2);
+      }
+      return { data: { message: "Ошибка сети: не удалось подключиться к серверу" }, ok: false, status: 0 };
+    }
     
-    throw new Error(`Сервер вернул некорректный ответ (${response.status}): ${text.substring(0, 50)}...`);
-  } catch (error: any) {
-    if (retries > 0 && (error.message.includes('Rate exceeded') || error.message.includes('429'))) {
-      console.warn(`Rate limit exceeded, retrying in ${delay}ms... (${retries} retries left)`);
+    if (retries > 0) {
+      console.warn(`Fetch exception, retrying in ${delay}ms... (${retries} retries left)`);
       await new Promise(resolve => setTimeout(resolve, delay));
       return safeFetchJson(url, options, retries - 1, delay * 2);
     }
-    throw error;
+    throw e;
   }
+};
+
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+const b24Queue = { current: [] as (() => Promise<any>)[] };
+const isProcessingQueue = { current: false };
+
+const processQueue = async () => {
+  if (isProcessingQueue.current || b24Queue.current.length === 0) return;
+  isProcessingQueue.current = true;
+  
+  while (b24Queue.current.length > 0) {
+    const task = b24Queue.current.shift();
+    if (task) {
+      await task();
+      await sleep(1000); // Гарантированная пауза 1 сек между запросами
+    }
+  }
+  isProcessingQueue.current = false;
+};
+
+const addToQueue = <T,>(task: () => Promise<T>): Promise<T> => {
+  return new Promise((resolve, reject) => {
+    b24Queue.current.push(async () => {
+      try {
+        resolve(await task());
+      } catch (e) {
+        reject(e);
+      }
+    });
+    processQueue();
+  });
 };
 
 const App: React.FC = () => {
@@ -196,333 +244,7 @@ const App: React.FC = () => {
     }
   }, [user?.id, user?.companyId, bitrixConfig.cloud?.apiToken, bitrixConfig.cloud?.enabled]);
 
-  // Initial load effect
-  useEffect(() => {
-    if (user && !hasAttemptedInitialLoad && !isInitialLoading.current) {
-      loadDataIfLoggedIn();
-    } else if (!user) {
-      setDbStatus('ready');
-      setHasAttemptedInitialLoad(false);
-    }
-  }, [user, hasAttemptedInitialLoad, loadDataIfLoggedIn]);
-
-  // Background sync effect
-  useEffect(() => {
-    if (!user || user.role === UserRole.SITE_ADMIN) return;
-
-    const interval = setInterval(() => {
-      if (!isSyncing && !isDirty) {
-        loadDataIfLoggedIn(true);
-      }
-    }, 30000);
-
-    return () => clearInterval(interval);
-  }, [user, isSyncing, isDirty, loadDataIfLoggedIn]);
-
-
-  const syncTaskToBitrix = useCallback(async (order: Order, task: Task): Promise<string | undefined> => {
-    if (!bitrixConfig.enabled || !bitrixConfig.webhookUrl || !order.externalId) return task.externalTaskId;
-    
-    try {
-      const baseUrl = bitrixConfig.webhookUrl.replace(/\/$/, '');
-      const stageLabel = STAGE_CONFIG[task.stage].label;
-      const taskTitle = `${stageLabel} | ${order.clientName}`;
-      
-      const mainAssignee = staff.find(s => s.id === task.assignedTo);
-      const accomplices = (task.accompliceIds || []).map(id => staff.find(s => s.id === id)?.b24Id).filter(Boolean);
-
-      const fields: any = {
-        ACCOMPLICES: accomplices
-      };
-      if (task.plannedDate) {
-        fields.DEADLINE = `${task.plannedDate}T18:00:00`;
-      }
-      if (mainAssignee?.b24Id) {
-        fields.RESPONSIBLE_ID = mainAssignee.b24Id;
-      }
-
-      if (task.externalTaskId) {
-        await safeFetchJson('/api/b24-proxy', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            url: `${baseUrl}/tasks.task.update.json`,
-            method: 'POST',
-            body: {
-              taskId: task.externalTaskId,
-              fields
-            }
-          })
-        });
-        console.log(`Updated Bitrix24 task ${task.externalTaskId} for deal ${order.externalId}`);
-        return task.externalTaskId;
-      } else {
-        // Check if task already exists in the deal
-        const stageConfig = STAGE_CONFIG[task.stage];
-        const stageLabel = stageConfig.label;
-        const keywords = stageConfig.keywords || [stageLabel.toLowerCase()];
-
-        const filter: any = { "UF_CRM_TASK": [`D_${order.externalId}`] };
-
-        const { data: listData } = await safeFetchJson('/api/b24-proxy', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            url: `${baseUrl}/tasks.task.list.json`,
-            method: 'POST',
-            body: {
-              filter,
-              select: ["ID", "TITLE"]
-            }
-          })
-        });
-        const b24Tasks = Array.isArray(listData.result) ? listData.result : (listData.result?.tasks || []);
-        
-        const existingTask = b24Tasks.find((bt: any) => {
-          const title = (bt.TITLE || '').toLowerCase();
-          return title.includes(stageLabel.toLowerCase()) || keywords.some(k => title.includes(k));
-        });
-
-        if (existingTask) {
-          const b24TaskId = String(existingTask.ID || existingTask.id);
-          await safeFetchJson('/api/b24-proxy', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              url: `${baseUrl}/tasks.task.update.json`,
-              method: 'POST',
-              body: {
-                taskId: b24TaskId,
-                fields
-              }
-            })
-          });
-          setOrders(prev => prev.map(o => o.id !== order.id ? o : {
-            ...o,
-            tasks: o.tasks.map(t => t.id === task.id ? { ...t, externalTaskId: b24TaskId } : t)
-          }));
-          setIsDirty(true);
-          console.log(`Updated existing Bitrix24 task ${b24TaskId} for deal ${order.externalId}`);
-          return b24TaskId;
-        } else {
-          const createFields: any = {
-            ...fields,
-            TITLE: taskTitle,
-            DESCRIPTION: `Задача по сделке: ${bitrixConfig.webhookUrl.split('/rest/')[0]}/crm/deal/details/${order.externalId}/`,
-            UF_CRM_TASK: [`D_${order.externalId}`],
-            RESPONSIBLE_ID: fields.RESPONSIBLE_ID || user?.b24Id
-          };
-          
-          if (bitrixConfig.groupId) {
-            createFields.GROUP_ID = bitrixConfig.groupId;
-          }
-
-          const { data } = await safeFetchJson('/api/b24-proxy', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              url: `${baseUrl}/tasks.task.add.json`,
-              method: 'POST',
-              body: { fields: createFields }
-            })
-          });
-          if (data.result?.task?.id) {
-            const b24TaskId = String(data.result.task.id);
-            setOrders(prev => prev.map(o => o.id !== order.id ? o : {
-              ...o,
-              tasks: o.tasks.map(t => t.id === task.id ? { ...t, externalTaskId: b24TaskId } : t)
-            }));
-            setIsDirty(true);
-            console.log(`Created Bitrix24 task ${b24TaskId} for deal ${order.externalId}`);
-            return b24TaskId;
-          }
-        }
-      }
-    } catch (e) {
-      console.error("Failed to sync task to Bitrix24", e);
-    }
-    return undefined;
-  }, [bitrixConfig, staff, user]);
-
-  const syncTaskActionToBitrix = useCallback(async (order: Order, task: Task, currentUser: User, action: 'start' | 'pause' | 'complete', comment?: string) => {
-    if (!bitrixConfig.enabled || !bitrixConfig.webhookUrl) return;
-    
-    try {
-      let taskId = task.externalTaskId;
-      if (!taskId) {
-        taskId = await syncTaskToBitrix(order, task);
-      }
-      if (!taskId) return;
-
-      const baseUrl = bitrixConfig.webhookUrl.replace(/\/$/, '');
-
-      let method = '';
-      if (action === 'start') method = 'tasks.task.start.json';
-      if (action === 'pause') method = 'tasks.task.pause.json';
-      if (action === 'complete') method = 'tasks.task.complete.json';
-
-      if (method) {
-        await safeFetchJson('/api/b24-proxy', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            url: `${baseUrl}/${method}`,
-            method: 'POST',
-            body: { taskId }
-          })
-        });
-        console.log(`Synced task ${action} for task ${taskId} to Bitrix24.`);
-      }
-
-      if (comment) {
-        await safeFetchJson('/api/b24-proxy', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            url: `${baseUrl}/task.commentitem.add.json`,
-            method: 'POST',
-            body: {
-              taskId,
-              fields: {
-                POST_MESSAGE: `[b]${currentUser.name}[/b]: ${comment}`
-              }
-            }
-          })
-        });
-        console.log(`Added comment to task ${taskId} in Bitrix24.`);
-      }
-    } catch (e) {
-      console.error(`Failed to sync task ${action} to Bitrix24`, e);
-    }
-  }, [bitrixConfig, syncTaskToBitrix]);
-
-  const onAddB24Comment = useCallback(async (taskId: string, message: string) => {
-    if (!bitrixConfig.enabled || !bitrixConfig.webhookUrl) return;
-    try {
-      const baseUrl = bitrixConfig.webhookUrl.replace(/\/$/, '');
-      await safeFetchJson('/api/b24-proxy', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          url: `${baseUrl}/task.commentitem.add.json`,
-          method: 'POST',
-          body: {
-            taskId,
-            fields: {
-              POST_MESSAGE: `[b]${user?.name || 'Система'}[/b]: ${message}`
-            }
-          }
-        })
-      });
-      console.log(`Added comment to task ${taskId} in Bitrix24.`);
-    } catch (e) {
-      console.error("Failed to add comment to Bitrix24", e);
-    }
-  }, [bitrixConfig, user]);
-
-    const updateTaskStatus = useCallback((orderId: string, taskId: string, status: TaskStatus | 'RESUME', comment?: string) => {
-      setOrders(prev => {
-        let updatedTask: Task | undefined;
-        let updatedOrder: Order | undefined;
-
-        const newOrders = prev.map(o => {
-          if (o.id !== orderId) return o;
-          const newTasks = o.tasks.map(t => {
-            if (t.id !== taskId) return t;
-            const newStatus = status === 'RESUME' ? TaskStatus.IN_PROGRESS : status;
-            const now = new Date().toISOString();
-            const updates: Partial<Task> = { status: newStatus as TaskStatus };
-            if (newStatus === TaskStatus.IN_PROGRESS && !t.startedAt) updates.startedAt = now;
-            if (newStatus === TaskStatus.COMPLETED) updates.completedAt = now;
-            if (comment) updates.notes = t.notes ? `${t.notes}\n${comment}` : comment;
-            updatedTask = { ...t, ...updates };
-            return updatedTask;
-          });
-          updatedOrder = { ...o, tasks: newTasks };
-          return updatedOrder;
-        });
-
-        // Side effect: Sync with Bitrix24
-        if (bitrixConfig.enabled && updatedOrder && updatedTask && user) {
-          if (status === TaskStatus.IN_PROGRESS || status === 'RESUME') {
-            syncTaskActionToBitrix(updatedOrder, updatedTask, user, 'start');
-          } else if (status === TaskStatus.PAUSED) {
-            syncTaskActionToBitrix(updatedOrder, updatedTask, user, 'pause', comment);
-          } else if (status === TaskStatus.COMPLETED) {
-            syncTaskActionToBitrix(updatedOrder, updatedTask, user, 'complete', comment);
-          }
-        }
-
-        return newOrders;
-      });
-    }, [user, bitrixConfig.enabled, syncTaskActionToBitrix]);
-
-
-
-    const onUpdateTaskPlanning = useCallback(async (orderId: string, taskId: string, date: string | undefined, userId: string | undefined, accompliceIds?: string[]) => {
-      let updatedTask: Task | undefined;
-      let updatedOrder: Order | undefined;
-
-      // Calculate new state first
-      setOrders(prev => {
-        const newOrders = prev.map(o => {
-          if (o.id !== orderId) return o;
-          const newTasks = o.tasks.map(t => {
-            if (t.id !== taskId) return t;
-            const ut = { ...t, plannedDate: date, assignedTo: userId, accompliceIds: accompliceIds || [] };
-            updatedTask = ut;
-            return ut;
-          });
-          const uo = { ...o, tasks: newTasks };
-          updatedOrder = uo;
-          return uo;
-        });
-        return newOrders;
-      });
-
-      setIsDirty(true);
-
-      // Perform sync outside of setOrders to avoid state issues
-      // We use the captured updatedOrder and updatedTask
-      if (bitrixConfig.enabled && updatedOrder && updatedTask) {
-        await syncTaskToBitrix(updatedOrder, updatedTask);
-      }
-    }, [syncTaskToBitrix, bitrixConfig.enabled]);
-
-  const onCreateB24Task = useCallback(async (orderId: string, taskId: string) => {
-    const order = orders.find(o => o.id === orderId);
-    if (!order) return;
-    const task = order.tasks.find(t => t.id === taskId);
-    if (!task) return;
-
-    if (task.externalTaskId && task.externalTaskId !== 'undefined') {
-      window.open(`${bitrixConfig.webhookUrl.split('/rest/')[0]}/company/personal/user/0/tasks/task/view/${task.externalTaskId}/`, '_blank');
-      return;
-    }
-
-    const b24TaskId = await syncTaskToBitrix(order, task);
-    if (b24TaskId) {
-      window.open(`${bitrixConfig.webhookUrl.split('/rest/')[0]}/company/personal/user/0/tasks/task/view/${b24TaskId}/`, '_blank');
-    } else {
-      alert("Не удалось создать или найти задачу в Битрикс24");
-    }
-  }, [orders, syncTaskToBitrix, bitrixConfig.webhookUrl]);
-
-  if (dbStatus === 'loading' && user) {
-    return (
-      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center space-y-6">
-        <Loader2 size={48} className="text-blue-500 animate-spin" />
-        <div className="text-center">
-          <h2 className="text-white font-black uppercase text-sm tracking-widest">МебельПлан</h2>
-          <p className="text-slate-500 text-[10px] mt-2 uppercase tracking-[0.3em] flex items-center justify-center gap-2">
-            <Database size={12}/> Загрузка данных предприятия...
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  const onSyncBitrix = async () => {
+  const onSyncBitrix = useCallback(async () => {
     if (!bitrixConfig.enabled || !bitrixConfig.webhookUrl || !user) return 0;
     
     try {
@@ -554,23 +276,14 @@ const App: React.FC = () => {
       const deals = Array.isArray(data.result) ? data.result : [];
       console.log(`✅ Найдено сделок в Bitrix24: ${deals.length}`);
       
-      // Get IDs of all deals found to filter tasks correctly
-      const dealIds = deals.map((d: any) => `D_${d.ID}`);
-      let importedCount = 0;
       const dealsWithTasks: any[] = [];
 
-      // 2. Fetch Tasks for all deals at once if possible, or filtered by deal IDs
-      // The current implementation fetches tasks deal by deal, which is fine with rate limiting.
-      // The issue is that it fetches tasks for ALL deals, not just those in selected stages.
-      // Actually, the filter UF_CRM_TASK is correct, but we need to ensure we only process tasks
-      // that belong to the deals we just fetched.
-      
+      // 2. Fetch Tasks for each deal
       for (const deal of deals) {
-        await new Promise(resolve => setTimeout(resolve, 500)); // Rate limit protection
+        await new Promise(resolve => setTimeout(resolve, 300)); // Rate limit protection
         const dealId = String(deal.ID);
-        // Filter tasks that are linked to this specific deal
-        const filter: any = { "UF_CRM_TASK": [`D_${dealId}`] };
-
+        
+        // First try: tasks linked to CRM deal
         const { data: tasksData } = await safeFetchJson('/api/b24-proxy', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -578,153 +291,153 @@ const App: React.FC = () => {
             url: `${baseUrl}/tasks.task.list.json`,
             method: 'POST',
             body: {
-              filter,
-              select: ["ID", "TITLE", "REAL_STATUS", "UF_CRM_TASK"]
+              filter: { "UF_CRM_TASK": [`D_${dealId}`] },
+              select: ["ID", "TITLE", "NAME", "REAL_STATUS", "GROUP_ID", "RESPONSIBLE_ID", "ACCOMPLICES", "DEADLINE", "DESCRIPTION"]
             }
           })
         });
-        const b24Tasks = Array.isArray(tasksData.result) ? tasksData.result : (tasksData.result?.tasks || []);
-        dealsWithTasks.push({ deal, b24Tasks });
+        
+        let b24Tasks = Array.isArray(tasksData.result?.tasks) ? tasksData.result.tasks : (Array.isArray(tasksData.result) ? tasksData.result : []);
+
+        // Second try: search by order number in title if no tasks found or to find more
+        const { data: groupTasksData } = await safeFetchJson('/api/b24-proxy', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            url: `${baseUrl}/tasks.task.list.json`,
+            method: 'POST',
+            body: {
+              filter: { 
+                "%TITLE": dealId // Search for order number in task title
+              },
+              select: ["ID", "TITLE", "NAME", "REAL_STATUS", "GROUP_ID", "RESPONSIBLE_ID", "ACCOMPLICES", "DEADLINE", "DESCRIPTION"]
+            }
+          })
+        });
+
+        const groupTasks = Array.isArray(groupTasksData.result?.tasks) ? groupTasksData.result.tasks : (Array.isArray(groupTasksData.result) ? groupTasksData.result : []);
+        
+        // Merge tasks, avoiding duplicates by ID
+        const allTasksMap = new Map();
+        b24Tasks.forEach((t: any) => allTasksMap.set(String(t.ID || t.id), t));
+        groupTasks.forEach((t: any) => allTasksMap.set(String(t.ID || t.id), t));
+        
+        dealsWithTasks.push({ deal, b24Tasks: Array.from(allTasksMap.values()) });
       }
 
-      // 3. Update state using functional update to avoid race conditions
-      console.log('💾 Обновление локального состояния заказов...');
-      let finalOrders: Order[] = [];
-      setOrders(prev => {
-        const updatedOrders = [...prev];
+      // 3. Smart Merge with existing orders
+      setOrders(prevOrders => {
+        const updatedOrders = [...prevOrders];
         
         dealsWithTasks.forEach(({ deal, b24Tasks }) => {
           const dealId = String(deal.ID);
           const existingOrderIndex = updatedOrders.findIndex(o => o.externalId === dealId);
           
+          const tasks: Task[] = b24Tasks.flatMap((bt: any): Task[] => {
+            const b24Status = parseInt(bt.REAL_STATUS);
+            const b24Id = String(bt.ID || bt.id);
+            const b24ResponsibleId = String(bt.RESPONSIBLE_ID);
+            const b24Accomplices = Array.isArray(bt.ACCOMPLICES) ? bt.ACCOMPLICES.map(String) : [];
+            const b24Deadline = bt.DEADLINE ? bt.DEADLINE.split('T')[0] : undefined;
+            const b24Description = bt.DESCRIPTION || undefined;
+            const b24Title = (bt.title || bt.TITLE || '').toLowerCase();
+            
+            let stage: ProductionStage | null = null;
+            if (b24Title.includes('распил')) stage = ProductionStage.SAWING;
+            else if (b24Title.includes('кромление')) stage = ProductionStage.EDGE_BANDING;
+            else if (b24Title.includes('присадка')) stage = ProductionStage.DRILLING;
+            else if (b24Title.includes('упаковка')) stage = ProductionStage.PACKAGING;
+            else if (b24Title.includes('комплектация')) stage = ProductionStage.KIT_ASSEMBLY;
+            else if (b24Title.includes('сборка')) stage = ProductionStage.ASSEMBLY;
+            else if (b24Title.includes('отгрузка')) stage = ProductionStage.SHIPMENT;
+
+            if (!stage) return []; // Filter out tasks without matching keywords
+
+            let status = TaskStatus.PENDING;
+            if (b24Status >= 4) status = TaskStatus.COMPLETED;
+            else if (b24Status === 3) status = TaskStatus.IN_PROGRESS;
+
+            // Map B24 IDs to local staff IDs
+            const assignedTo = staff.find(s => s.b24Id === b24ResponsibleId)?.id;
+            const accompliceIds = b24Accomplices.map((bid: string) => staff.find(s => s.b24Id === bid)?.id).filter(Boolean) as string[];
+
+            // If order exists, try to find existing task to preserve its data
+            if (existingOrderIndex !== -1) {
+              const existingTask = updatedOrders[existingOrderIndex].tasks.find(t => t.externalTaskId === b24Id);
+              if (existingTask) {
+                return [{
+                  ...existingTask,
+                  status: status === TaskStatus.COMPLETED ? TaskStatus.COMPLETED : (status === TaskStatus.IN_PROGRESS ? TaskStatus.IN_PROGRESS : existingTask.status),
+                  assignedTo: assignedTo || existingTask.assignedTo,
+                  accompliceIds: accompliceIds.length > 0 ? accompliceIds : existingTask.accompliceIds,
+                  plannedDate: b24Deadline || existingTask.plannedDate,
+                  notes: b24Description || existingTask.notes,
+                  title: bt.title || bt.TITLE || 'Без названия',
+                  stage
+                }];
+              }
+            }
+
+            // New task
+            return [{
+              id: 'T-' + Math.random().toString(36).substr(2, 9),
+              orderId: '', // Will be set below
+              stage,
+              status,
+              externalTaskId: b24Id,
+              assignedTo,
+              accompliceIds,
+              plannedDate: b24Deadline,
+              notes: b24Description,
+              title: bt.title || bt.TITLE || 'Без названия'
+            }];
+          });
+
           if (existingOrderIndex !== -1) {
             // Update existing order
-            const order = updatedOrders[existingOrderIndex];
             updatedOrders[existingOrderIndex] = {
-              ...order,
-              tasks: order.tasks.map(t => {
-                const stageConfig = STAGE_CONFIG[t.stage];
-                const stageLabel = stageConfig.label;
-                const keywords = stageConfig.keywords || [stageLabel.toLowerCase()];
-                
-                const b24Task = b24Tasks.find((bt: any) => {
-                  const title = (bt.TITLE || '').toLowerCase();
-                  // Check if task is linked to this deal AND matches stage keywords
-                  const isLinkedToDeal = bt.UF_CRM_TASK && bt.UF_CRM_TASK.includes(`D_${deal.ID}`);
-                  const matchesKeyword = keywords.some(k => title.includes(k.toLowerCase()));
-                  if (isLinkedToDeal && matchesKeyword) {
-                    console.log(`DEBUG: Existing Order Task ${bt.ID} matched for Deal ${deal.ID}:`, title, bt.UF_CRM_TASK);
-                  }
-                  return isLinkedToDeal && matchesKeyword;
-                });
-
-                if (b24Task) {
-                  const b24Status = parseInt(b24Task.REAL_STATUS);
-                  const b24Id = String(b24Task.ID || b24Task.id);
-                  let newStatus = t.status;
-                  if (b24Status >= 4) newStatus = TaskStatus.COMPLETED;
-                  else if (b24Status === 3) newStatus = TaskStatus.IN_PROGRESS;
-                  
-                  return { ...t, externalTaskId: b24Id, status: newStatus };
-                }
-                return t;
-              })
+              ...updatedOrders[existingOrderIndex],
+              clientName: deal.TITLE || updatedOrders[existingOrderIndex].clientName,
+              deadline: deal.CLOSEDATE ? deal.CLOSEDATE.split('T')[0] : updatedOrders[existingOrderIndex].deadline,
+              description: deal.ADDITIONAL_INFO || deal.COMMENTS || updatedOrders[existingOrderIndex].description,
+              externalStageId: deal.STAGE_ID,
+              tasks: tasks.map(t => ({ ...t, orderId: updatedOrders[existingOrderIndex].id }))
             };
           } else {
             // Create new order
-            const orderId = 'O-' + Math.random().toString(36).substr(2, 9);
-            const newOrder: Order = {
-              id: orderId,
+            const newOrderId = 'O-' + Math.random().toString(36).substr(2, 9);
+            updatedOrders.push({
+              id: newOrderId,
               externalId: dealId,
+              externalStageId: deal.STAGE_ID,
               orderNumber: dealId,
               clientName: deal.TITLE || 'Без названия',
               deadline: deal.CLOSEDATE ? deal.CLOSEDATE.split('T')[0] : '',
               description: deal.ADDITIONAL_INFO || deal.COMMENTS || '',
               createdAt: new Date().toISOString(),
               priority: 'MEDIUM',
-              tasks: STAGE_SEQUENCE.map((stage: ProductionStage) => {
-                const stageConfig = STAGE_CONFIG[stage];
-                const stageLabel = stageConfig.label;
-                const keywords = stageConfig.keywords || [stageLabel.toLowerCase()];
-
-                const b24Task = b24Tasks.find((bt: any) => {
-                  const title = (bt.TITLE || '').toLowerCase();
-                  // Check if task is linked to this deal AND matches stage keywords
-                  const isLinkedToDeal = bt.UF_CRM_TASK && bt.UF_CRM_TASK.includes(`D_${deal.ID}`);
-                  const matchesKeyword = keywords.some(k => title.includes(k.toLowerCase()));
-                  if (isLinkedToDeal && matchesKeyword) {
-                    console.log(`DEBUG: New Order Task ${bt.ID} matched for Deal ${deal.ID}:`, title, bt.UF_CRM_TASK);
-                  }
-                  return isLinkedToDeal && matchesKeyword;
-                });
-
-                const b24Status = b24Task ? parseInt(b24Task.REAL_STATUS) : 2;
-                const b24Id = b24Task ? String(b24Task.ID || b24Task.id) : undefined;
-                
-                let status = TaskStatus.PENDING;
-                if (b24Status >= 4) status = TaskStatus.COMPLETED;
-                else if (b24Status === 3) status = TaskStatus.IN_PROGRESS;
-
-                return {
-                  id: 'T-' + Math.random().toString(36).substr(2, 9),
-                  orderId: orderId,
-                  stage,
-                  status,
-                  title: deal.TITLE || '',
-                  externalTaskId: b24Id
-                };
-              }),
-              companyId: user.companyId
-            };
-            updatedOrders.push(newOrder);
-            importedCount++;
+              companyId: user.companyId,
+              source: 'BITRIX24',
+              tasks: tasks.map(t => ({ ...t, orderId: newOrderId }))
+            });
           }
         });
 
-        finalOrders = updatedOrders;
         return updatedOrders;
       });
 
       setIsDirty(true);
-      
-      // 4. Background sync for missing tasks in newly imported orders
-      // We do this after the state update to ensure IDs are consistent
-      setTimeout(async () => {
-        const newDeals = dealsWithTasks.filter(({ deal }) => !orders.find(o => o.externalId === String(deal.ID)));
-        if (newDeals.length > 0) {
-          console.log(`🚀 Запуск фонового создания задач для ${newDeals.length} новых сделок...`);
-        }
-        for (const { deal } of newDeals) {
-          const dealId = String(deal.ID);
-          // Find the order in the LATEST state (using a trick or just trusting the state update)
-          // Actually, it's safer to just let the user plan them, but let's try to create them
-          const order = finalOrders.find(o => o.externalId === dealId);
-          if (order) {
-            for (const task of order.tasks) {
-              if (!task.externalTaskId) {
-                await syncTaskToBitrix(order, task);
-                await new Promise(r => setTimeout(r, 300));
-              }
-            }
-          }
-        }
-      }, 1000);
-      
-      if (importedCount > 0) {
-        showToast(`Импортировано ${importedCount} новых сделок`, 'success');
-      } else {
-        showToast('Данные синхронизированы');
-      }
+      showToast(`Синхронизация завершена: ${deals.length} сделок`, 'success');
+      return deals.length;
 
-      return importedCount;
-    } catch (e) {
-      console.error("Sync error", e);
-      showToast('Ошибка синхронизации', 'error');
+    } catch (e: any) {
+      console.error("Failed to sync with Bitrix24", e);
+      showToast(e.message || "Ошибка синхронизации", "error");
       return 0;
     }
-  };
+  }, [bitrixConfig, user, staff, showToast, setOrders, setIsDirty]);
 
-  const onSyncStaff = async () => {
+  const onSyncStaff = useCallback(async () => {
     if (!bitrixConfig.enabled || !bitrixConfig.webhookUrl || !user) return 0;
     
     setIsSyncing(true);
@@ -798,7 +511,458 @@ const App: React.FC = () => {
     } finally {
       setIsSyncing(false);
     }
-  };
+  }, [bitrixConfig, user, staff, showToast, setStaff, setIsDirty]);
+
+  // Initial load effect
+  useEffect(() => {
+    if (user && !hasAttemptedInitialLoad && !isInitialLoading.current) {
+      loadDataIfLoggedIn().then(() => {
+        if (bitrixConfig.enabled && bitrixConfig.webhookUrl) {
+          onSyncBitrix();
+        }
+      });
+    } else if (!user) {
+      setDbStatus('ready');
+      setHasAttemptedInitialLoad(false);
+    }
+  }, [user, hasAttemptedInitialLoad, loadDataIfLoggedIn, bitrixConfig.enabled, bitrixConfig.webhookUrl]);
+
+  // Background sync effect
+  useEffect(() => {
+    if (!user || user.role === UserRole.SITE_ADMIN) return;
+
+    const interval = setInterval(() => {
+      if (!isSyncing && !isDirty) {
+        loadDataIfLoggedIn(true);
+      }
+    }, 30000);
+
+    return () => clearInterval(interval);
+  }, [user, isSyncing, isDirty, loadDataIfLoggedIn]);
+
+
+  const syncTaskToBitrix = useCallback(async (order: Order, task: Task): Promise<string | undefined> => {
+    if (!bitrixConfig.enabled || !bitrixConfig.webhookUrl || !order.externalId) return task.externalTaskId;
+    
+    try {
+      const baseUrl = bitrixConfig.webhookUrl.replace(/\/$/, '');
+      const stageLabel = STAGE_CONFIG[task.stage].label;
+      const taskTitle = `${stageLabel} | ${order.clientName}`;
+      
+      const mainAssignee = staff.find(s => s.id === task.assignedTo);
+      const accomplices = (task.accompliceIds || []).map(id => staff.find(s => s.id === id)?.b24Id).filter(Boolean);
+
+      // Find a fallback responsible person (first admin with b24Id, or current user, or any staff with b24Id)
+      const fallbackResponsible = 
+        staff.find(s => s.role === UserRole.COMPANY_ADMIN && s.b24Id)?.b24Id || 
+        user?.b24Id || 
+        staff.find(s => s.b24Id)?.b24Id;
+
+      const fields: any = {
+        ACCOMPLICES: accomplices,
+        RESPONSIBLE_ID: mainAssignee?.b24Id || fallbackResponsible
+      };
+      
+      if (!fields.RESPONSIBLE_ID) {
+        console.warn("No RESPONSIBLE_ID found for task sync. Attempting to fetch current user from Bitrix...");
+        try {
+          const { data: curUserData } = await addToQueue(() => safeFetchJson('/api/b24-proxy', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              url: `${baseUrl}/user.current.json`,
+              method: 'POST'
+            })
+          }));
+          if (curUserData.result?.ID) {
+            fields.RESPONSIBLE_ID = String(curUserData.result.ID);
+            console.log(`Using Bitrix current user ID as fallback: ${fields.RESPONSIBLE_ID}`);
+          }
+        } catch (err) {
+          console.error("Failed to fetch current user from Bitrix for fallback", err);
+        }
+      }
+
+      if (!fields.RESPONSIBLE_ID) {
+        console.error("CRITICAL: Still no RESPONSIBLE_ID found. Bitrix24 will reject this task.");
+      }
+
+      if (task.plannedDate) {
+        fields.DEADLINE = `${task.plannedDate}T18:00:00`;
+      }
+      
+      if (task.externalTaskId) {
+        await addToQueue(() => safeFetchJson('/api/b24-proxy', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            url: `${baseUrl}/tasks.task.update.json`,
+            method: 'POST',
+            body: {
+              taskId: task.externalTaskId,
+              fields
+            }
+          })
+        }));
+        console.log(`Updated Bitrix24 task ${task.externalTaskId} for deal ${order.externalId}`);
+        return task.externalTaskId;
+      } else {
+        // Check if task already exists in the deal OR in Group 53 by title
+        const stageConfig = STAGE_CONFIG[task.stage];
+        const stageLabel = stageConfig.label;
+        const keywords = stageConfig.keywords || [stageLabel.toLowerCase()];
+
+        // Search by CRM link AND by title in Group 53
+        const { data: listData } = await addToQueue(() => safeFetchJson('/api/b24-proxy', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            url: `${baseUrl}/tasks.task.list.json`,
+            method: 'POST',
+            body: {
+              filter: {
+                "GROUP_ID": 53,
+                "%TITLE": order.externalId // Search for order number in title
+              },
+              select: ["ID", "TITLE"]
+            }
+          })
+        }));
+        
+        const b24Tasks = Array.isArray(listData.result?.tasks) ? listData.result.tasks : (Array.isArray(listData.result) ? listData.result : []);
+        
+        const existingTask = b24Tasks.find((bt: any) => {
+          const title = (bt.TITLE || '').toLowerCase();
+          return title.includes(stageLabel.toLowerCase()) || keywords.some(k => title.includes(k.toLowerCase()));
+        });
+
+        if (existingTask) {
+          const b24TaskId = String(existingTask.ID || existingTask.id);
+          await addToQueue(() => safeFetchJson('/api/b24-proxy', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              url: `${baseUrl}/tasks.task.update.json`,
+              method: 'POST',
+              body: {
+                taskId: b24TaskId,
+                fields
+              }
+            })
+          }));
+          setOrders(prev => prev.map(o => o.id !== order.id ? o : {
+            ...o,
+            tasks: o.tasks.map(t => t.id === task.id ? { ...t, externalTaskId: b24TaskId } : t)
+          }));
+          setIsDirty(true);
+          console.log(`Linked to existing Bitrix24 task ${b24TaskId} for order ${order.externalId}`);
+          return b24TaskId;
+        } else {
+          const createFields: any = {
+            ...fields,
+            TITLE: taskTitle,
+            DESCRIPTION: `Задача по сделке: ${bitrixConfig.webhookUrl.split('/rest/')[0]}/crm/deal/details/${order.externalId}/`,
+            UF_CRM_TASK: [`D_${order.externalId}`],
+            GROUP_ID: 53 // Force production group
+          };
+          
+          if (bitrixConfig.groupId) {
+            createFields.GROUP_ID = bitrixConfig.groupId;
+          }
+
+          const { data } = await addToQueue(() => safeFetchJson('/api/b24-proxy', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              url: `${baseUrl}/tasks.task.add.json`,
+              method: 'POST',
+              body: { fields: createFields }
+            })
+          }));
+          if (data.result?.task?.id) {
+            const b24TaskId = String(data.result.task.id);
+            setOrders(prev => prev.map(o => o.id !== order.id ? o : {
+              ...o,
+              tasks: o.tasks.map(t => t.id === task.id ? { ...t, externalTaskId: b24TaskId } : t)
+            }));
+            setIsDirty(true);
+            console.log(`Created Bitrix24 task ${b24TaskId} for deal ${order.externalId}`);
+            return b24TaskId;
+          }
+        }
+      }
+    } catch (e) {
+      console.error("Failed to sync task to Bitrix24", e);
+    }
+    return undefined;
+  }, [bitrixConfig, staff, user]);
+
+  const syncTaskActionToBitrix = useCallback(async (order: Order, task: Task, currentUser: User, action: 'start' | 'pause' | 'complete', comment?: string) => {
+    if (!bitrixConfig.enabled || !bitrixConfig.webhookUrl) return;
+    
+    try {
+      let taskId = task.externalTaskId;
+      if (!taskId) {
+        taskId = await syncTaskToBitrix(order, task);
+      }
+      if (!taskId) return;
+
+      const baseUrl = bitrixConfig.webhookUrl.replace(/\/$/, '');
+
+      let method = '';
+      if (action === 'start') method = 'tasks.task.start.json';
+      if (action === 'pause') method = 'tasks.task.pause.json';
+      if (action === 'complete') method = 'tasks.task.complete.json';
+
+      if (method) {
+        const { data: actionData, ok: actionOk } = await addToQueue(() => safeFetchJson('/api/b24-proxy', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            url: `${baseUrl}/${method}`,
+            method: 'POST',
+            body: { taskId }
+          })
+        }));
+        
+        if (!actionOk) {
+          // If error is "Action not available" (error: "0" or "1048582"), it might mean it's already in that state.
+          // We can ignore this error to avoid cluttering logs and confusing the user.
+          if (actionData.error === "0" || actionData.error === "1048582" || actionData.error_description?.includes("Действие не доступно")) {
+            console.warn(`Bitrix24 task ${taskId} action ${action} skipped: ${actionData.error_description}`);
+          } else {
+            console.error(`Bitrix24 task ${taskId} action ${action} failed:`, actionData);
+          }
+        } else {
+          console.log(`Synced task ${action} for task ${taskId} to Bitrix24.`);
+        }
+      }
+
+      if (comment) {
+        await addToQueue(() => safeFetchJson('/api/b24-proxy', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            url: `${baseUrl}/task.commentitem.add.json`,
+            method: 'POST',
+            body: {
+              taskId,
+              fields: {
+                POST_MESSAGE: `[b]${currentUser.name}[/b]: ${comment}`
+              }
+            }
+          })
+        }));
+        console.log(`Added comment to task ${taskId} in Bitrix24.`);
+      }
+    } catch (e) {
+      console.error(`Failed to sync task ${action} to Bitrix24`, e);
+    }
+  }, [bitrixConfig, syncTaskToBitrix]);
+
+  const syncTaskFieldsToBitrix = useCallback(async (taskId: string, responsibleId: string | undefined, accompliceIds: string[]) => {
+    if (!bitrixConfig.enabled || !bitrixConfig.webhookUrl) return;
+    const baseUrl = bitrixConfig.webhookUrl.replace(/\/$/, '');
+    
+    const b24ResponsibleId = staff.find(s => s.id === responsibleId)?.b24Id;
+    const b24AccompliceIds = accompliceIds.map(aid => staff.find(s => s.id === aid)?.b24Id).filter(Boolean);
+
+    await addToQueue(() => safeFetchJson('/api/b24-proxy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: `${baseUrl}/tasks.task.update.json`,
+        method: 'POST',
+        body: { 
+          taskId, 
+          fields: { 
+            RESPONSIBLE_ID: b24ResponsibleId, 
+            ACCOMPLICES: b24AccompliceIds 
+          } 
+        }
+      })
+    }));
+  }, [bitrixConfig, staff]);
+
+  const syncTaskReportToBitrix = useCallback(async (taskId: string, task: Task) => {
+    if (!bitrixConfig.enabled || !bitrixConfig.webhookUrl) return;
+    const baseUrl = bitrixConfig.webhookUrl.replace(/\/$/, '');
+
+    const reportLines = task.details?.map(d => `- ${d.name || d.code}: ${d.quantity || 0} шт.`) || [];
+    const report = `Отчет по выполнению задачи:\n${reportLines.join('\n')}\n\nПримечания: ${task.notes || 'нет'}`;
+
+    await addToQueue(() => safeFetchJson('/api/b24-proxy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: `${baseUrl}/task.commentitem.add.json`,
+        method: 'POST',
+        body: {
+          taskId,
+          fields: {
+            AUTHOR_ID: bitrixConfig.webhookUrl.split('/rest/')[1].split('/')[0],
+            POST_MESSAGE: report
+          }
+        }
+      })
+    }));
+  }, [bitrixConfig]);
+
+  const onAddB24Comment = useCallback(async (taskId: string, message: string) => {
+    if (!bitrixConfig.enabled || !bitrixConfig.webhookUrl) return;
+    try {
+      const baseUrl = bitrixConfig.webhookUrl.replace(/\/$/, '');
+      await addToQueue(() => safeFetchJson('/api/b24-proxy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url: `${baseUrl}/task.commentitem.add.json`,
+          method: 'POST',
+          body: {
+            taskId,
+            fields: {
+              POST_MESSAGE: `[b]${user?.name || 'Система'}[/b]: ${message}`
+            }
+          }
+        })
+      }));
+      console.log(`Added comment to task ${taskId} in Bitrix24.`);
+    } catch (e) {
+      console.error("Failed to add comment to Bitrix24", e);
+    }
+  }, [bitrixConfig, user]);
+
+    const updateTaskStatus = useCallback((orderId: string, taskId: string, status: TaskStatus | 'RESUME', comment?: string) => {
+      setOrders(prev => {
+        let updatedTask: Task | undefined;
+        let updatedOrder: Order | undefined;
+
+        const newOrders = prev.map(o => {
+          if (o.id !== orderId) return o;
+          const newTasks = o.tasks.map(t => {
+            if (t.id !== taskId) return t;
+            const newStatus = status === 'RESUME' ? TaskStatus.IN_PROGRESS : status;
+            const now = new Date().toISOString();
+            const updates: Partial<Task> = { status: newStatus as TaskStatus };
+            if (newStatus === TaskStatus.IN_PROGRESS && !t.startedAt) updates.startedAt = now;
+            if (newStatus === TaskStatus.COMPLETED) updates.completedAt = now;
+            if (comment) updates.notes = t.notes ? `${t.notes}\n${comment}` : comment;
+            updatedTask = { ...t, ...updates };
+            return updatedTask;
+          });
+          updatedOrder = { ...o, tasks: newTasks };
+          return updatedOrder;
+        });
+
+        // Side effect: Sync with Bitrix24
+        if (bitrixConfig.enabled && updatedOrder && updatedTask && user) {
+          const stageLabel = STAGE_CONFIG[updatedTask.stage].label;
+          if (status === TaskStatus.IN_PROGRESS || status === 'RESUME') {
+            syncTaskActionToBitrix(updatedOrder, updatedTask, user, 'start', `Приступил к выполнению этапа: ${stageLabel}`);
+          } else if (status === TaskStatus.PAUSED) {
+            syncTaskActionToBitrix(updatedOrder, updatedTask, user, 'pause', comment || `Приостановил выполнение этапа: ${stageLabel}`);
+          } else if (status === TaskStatus.COMPLETED) {
+            syncTaskActionToBitrix(updatedOrder, updatedTask, user, 'complete', comment || `Завершил этап: ${stageLabel}`);
+            if (updatedTask.externalTaskId) {
+              syncTaskReportToBitrix(updatedTask.externalTaskId, updatedTask);
+            }
+          }
+        }
+
+        return newOrders;
+      });
+    }, [user, bitrixConfig.enabled, syncTaskActionToBitrix]);
+
+
+
+    const onUpdateTaskPlanning = useCallback(async (orderId: string, taskId: string, date: string | undefined, userId: string | undefined, accompliceIds?: string[]) => {
+      let updatedTask: Task | undefined;
+      let updatedOrder: Order | undefined;
+
+      // Calculate new state first
+      setOrders(prev => {
+        const newOrders = prev.map(o => {
+          if (o.id !== orderId) return o;
+          const newTasks = o.tasks.map(t => {
+            if (t.id !== taskId) return t;
+            const ut = { ...t, plannedDate: date, assignedTo: userId, accompliceIds: accompliceIds || [] };
+            updatedTask = ut;
+            return ut;
+          });
+          const uo = { ...o, tasks: newTasks };
+          updatedOrder = uo;
+          return uo;
+        });
+        return newOrders;
+      });
+
+      setIsDirty(true);
+
+      // Perform sync outside of setOrders to avoid state issues
+      // We use the captured updatedOrder and updatedTask
+      if (bitrixConfig.enabled && updatedOrder && updatedTask && updatedTask.externalTaskId) {
+        await syncTaskFieldsToBitrix(updatedTask.externalTaskId, updatedTask.assignedTo, updatedTask.accompliceIds || []);
+      }
+    }, [syncTaskToBitrix, bitrixConfig.enabled, syncTaskFieldsToBitrix]);
+
+  const onCreateB24Task = useCallback(async (orderId: string, taskId: string) => {
+    const order = orders.find(o => o.id === orderId);
+    if (!order) return;
+    const task = order.tasks.find(t => t.id === taskId);
+    if (!task) return;
+
+    if (task.externalTaskId && task.externalTaskId !== 'undefined') {
+      const b24Base = bitrixConfig.webhookUrl.split('/rest/')[0];
+      window.open(`${b24Base}/company/personal/user/0/tasks/task/view/${task.externalTaskId}/`, '_blank');
+      return;
+    }
+
+    const b24TaskId = await syncTaskToBitrix(order, task);
+    if (b24TaskId) {
+      const b24Base = bitrixConfig.webhookUrl.split('/rest/')[0];
+      window.open(`${b24Base}/company/personal/user/0/tasks/task/view/${b24TaskId}/`, '_blank');
+    } else {
+      showToast("Не удалось создать или найти задачу в Битрикс24", "error");
+    }
+  }, [orders, syncTaskToBitrix, bitrixConfig.webhookUrl]);
+
+  const toggleWorkSession = useCallback(() => {
+    if (!user) return;
+    const activeSession = sessions.find(s => s.userId === user.id && !s.endTime);
+    const now = new Date().toISOString();
+
+    if (activeSession) {
+      const updated = sessions.map(s => s.id === activeSession.id ? { ...s, endTime: now } : s);
+      setSessions(updated);
+      setIsDirty(true);
+      showToast("Смена завершена", "success");
+    } else {
+      const newSession: WorkSession = {
+        id: 'S-' + Math.random().toString(36).substr(2, 9),
+        userId: user.id,
+        startTime: now,
+        companyId: user.companyId
+      };
+      const updated = [...sessions, newSession];
+      setSessions(updated);
+      setIsDirty(true);
+      showToast("Смена начата", "success");
+    }
+  }, [user, sessions, showToast]);
+
+  if (dbStatus === 'loading' && user) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center space-y-6">
+        <Loader2 size={48} className="text-blue-500 animate-spin" />
+        <div className="text-center">
+          <h2 className="text-white font-black uppercase text-sm tracking-widest">МебельПлан</h2>
+          <p className="text-slate-500 text-[10px] mt-2 uppercase tracking-[0.3em] flex items-center justify-center gap-2">
+            <Database size={12}/> Загрузка данных предприятия...
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   if (!user) {
     return <LoginPage 
@@ -882,6 +1046,9 @@ const App: React.FC = () => {
         <header className="h-16 bg-white border-b border-slate-200 px-8 flex items-center justify-between shadow-sm z-30">
           <h1 className="text-xl font-bold uppercase text-slate-800 tracking-tight">{NAVIGATION_ITEMS.find(i => i.id === currentPage)?.label}</h1>
           <div className="flex items-center gap-6">
+            <button onClick={toggleWorkSession} className={`px-4 py-2 rounded-xl text-xs font-black uppercase transition-all shadow-lg ${sessions.some(s => s.userId === user.id && !s.endTime) ? 'bg-rose-50 text-rose-600' : 'bg-blue-600 text-white'}`}>
+              {sessions.some(s => s.userId === user.id && !s.endTime) ? 'Закончить смену' : 'Начать смену'}
+            </button>
             <div className="flex flex-col items-end">
               <div className="flex items-center gap-2">
                 {isDirty && !isSyncing && (
@@ -914,16 +1081,15 @@ const App: React.FC = () => {
           {currentPage === 'planning' && (
             <Planning 
               orders={myOrders} 
-              onAddOrder={o => { 
-                const newOrder = { ...o, companyId: user.companyId };
-                setOrders(prev => [...prev, newOrder]); 
-                setIsDirty(true);
-              }} 
               onSyncBitrix={onSyncBitrix} 
               onUpdateTaskPlanning={onUpdateTaskPlanning} 
               onCreateB24Task={onCreateB24Task}
               onUpdateOrderDescription={(oid, desc) => {
                 setOrders(prev => prev.map(o => o.id === oid ? { ...o, description: desc } : o));
+                setIsDirty(true);
+              }}
+              onDeleteTask={(oid, tid) => {
+                setOrders(prev => prev.map(o => o.id === oid ? { ...o, tasks: o.tasks.filter(t => t.id !== tid) } : o));
                 setIsDirty(true);
               }}
               onUpdateTaskRate={(oid, tid, r) => {
