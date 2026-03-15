@@ -17,7 +17,9 @@ import {
   Wallet,
   MessageSquare,
   CalendarDays,
-  Package
+  Package,
+  ShoppingCart,
+  ClipboardPenLine
 } from 'lucide-react';
 import { ProductionStage, UserRole } from './types';
 
@@ -32,6 +34,7 @@ export const STAGE_SEQUENCE = [
 ];
 
 export const STAGE_CONFIG = {
+  [ProductionStage.MATERIAL_ORDER]: { label: 'Заказ материалов', icon: <ClipboardPenLine size={20} />, color: 'bg-orange-500', keywords: ['заказ материалов'] },
   [ProductionStage.SAWING]: { label: 'Распил', icon: <Disc size={20} />, color: 'bg-blue-500', keywords: ['распил'] },
   [ProductionStage.EDGE_BANDING]: { label: 'Кромка', icon: <Layers size={20} />, color: 'bg-indigo-500', keywords: ['кром', 'кромить'] },
   [ProductionStage.DRILLING]: { label: 'Присадка', icon: <Target size={20} />, color: 'bg-cyan-500', keywords: ['присад', 'сверлить'] },
@@ -44,6 +47,7 @@ export const STAGE_CONFIG = {
 export const NAVIGATION_ITEMS = [
   { id: 'dashboard', label: 'Дашборд', icon: <LayoutDashboard size={20} />, roles: [UserRole.COMPANY_ADMIN, UserRole.EMPLOYEE] },
   { id: 'planning', label: 'Планирование', icon: <Calendar size={20} />, roles: [UserRole.COMPANY_ADMIN], allowProductionHead: true },
+  { id: 'supply', label: 'Снабжение', icon: <ShoppingCart size={20} />, roles: [UserRole.COMPANY_ADMIN], allowProductionHead: true },
   { id: 'schedule', label: 'График работы', icon: <CalendarDays size={20} />, roles: [UserRole.COMPANY_ADMIN, UserRole.EMPLOYEE] },
   { id: 'production', label: 'Производство', icon: <ClipboardList size={20} />, roles: [UserRole.COMPANY_ADMIN, UserRole.EMPLOYEE] },
   { id: 'reports', label: 'Отчеты', icon: <BarChart3 size={20} />, roles: [UserRole.COMPANY_ADMIN], allowProductionHead: true },

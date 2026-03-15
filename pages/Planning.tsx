@@ -68,9 +68,11 @@ const Planning: React.FC<PlanningProps> = ({
   const groupedInboxTasks = useMemo(() => {
     const list: (Task & { order: Order })[] = [];
     orders.forEach(order => {
-      if (order.tasks.find(t => t.stage === ProductionStage.SHIPMENT)?.status === TaskStatus.COMPLETED) return;
+      const lastTask = [...order.tasks].sort((a, b) => STAGE_SEQUENCE.indexOf(b.stage) - STAGE_SEQUENCE.indexOf(a.stage))[0];
+      if (lastTask?.status === TaskStatus.COMPLETED) return;
       
       order.tasks.forEach(task => {
+        if (task.stage === ProductionStage.MATERIAL_ORDER) return;
         if (!task.plannedDate && task.status !== TaskStatus.COMPLETED) {
           const s = inboxSearch.toLowerCase();
           if (order.orderNumber.toLowerCase().includes(s) || order.clientName.toLowerCase().includes(s)) list.push({ ...task, order });
@@ -226,7 +228,14 @@ const Planning: React.FC<PlanningProps> = ({
                                   <span className={`text-[10px] font-bold leading-tight line-clamp-2 ${isC ? 'text-emerald-700' : 'text-slate-800'}`}>{task.order.clientName}</span>
                                   {isOverdue && <span className="flex items-center gap-1 text-[8px] font-black text-rose-600 uppercase mt-1"><Clock size={8}/> ПРОСРОЧЕНО</span>}
                                 </div>
-                                <div className="flex items-center gap-1 shrink-0">
+                                <div className="flex flex-col items-end gap-1 shrink-0">
+                                  <button 
+                                    onClick={e => { e.stopPropagation(); onUpdateTaskPlanning(task.order.id, task.id, undefined, undefined, []); }} 
+                                    className="p-1 text-slate-300 hover:text-rose-500 transition-colors"
+                                    title="Убрать из плана"
+                                  >
+                                    <X size={10} />
+                                  </button>
                                   {task.externalTaskId && task.externalTaskId !== 'undefined' && bitrixConfig?.webhookUrl && (
                                     <a 
                                       href={`${bitrixConfig.webhookUrl.split('/rest/')[0]}/company/personal/user/0/tasks/task/view/${task.externalTaskId}/`} 
@@ -240,13 +249,6 @@ const Planning: React.FC<PlanningProps> = ({
                                       <span className="text-[8px] font-black uppercase">B24</span>
                                     </a>
                                   )}
-                                  <button 
-                                    onClick={e => { e.stopPropagation(); onUpdateTaskPlanning(task.order.id, task.id, undefined, undefined, []); }} 
-                                    className="p-1 text-slate-300 hover:text-rose-500 transition-colors"
-                                    title="Убрать из плана"
-                                  >
-                                    <X size={10} />
-                                  </button>
                                 </div>
                               </div>
                               <div className="mt-auto space-y-2">

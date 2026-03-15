@@ -6,6 +6,7 @@ export enum UserRole {
 }
 
 export enum ProductionStage {
+  MATERIAL_ORDER = 'MATERIAL_ORDER',
   SAWING = 'SAWING', 
   EDGE_BANDING = 'EDGE_BANDING', 
   DRILLING = 'DRILLING', 
@@ -20,6 +21,40 @@ export enum TaskStatus {
   IN_PROGRESS = 'IN_PROGRESS',
   PAUSED = 'PAUSED', 
   COMPLETED = 'COMPLETED'
+}
+
+export enum SupplyCategory {
+  FACADES = 'FACADES',
+  GLASS_METAL = 'GLASS_METAL',
+  COUNTERTOPS = 'COUNTERTOPS',
+  CHIPBOARD = 'CHIPBOARD',
+  FITTINGS = 'FITTINGS'
+}
+
+export enum SupplyStatus {
+  NOT_ORDERED = 'NOT_ORDERED',
+  ORDERED = 'ORDERED',
+  RECEIVED = 'RECEIVED'
+}
+
+export interface SupplyInvoice {
+  id: string;
+  status: SupplyStatus;
+  supplier: string;
+  amount: number;
+  info: string;
+}
+
+export interface SupplyItem {
+  info?: string;
+  status?: SupplyStatus;
+  supplier?: string;
+  amount?: number;
+  invoices?: SupplyInvoice[];
+}
+
+export type SupplyData = {
+  [key in SupplyCategory]?: SupplyItem;
 }
 
 export interface Detail {
@@ -92,6 +127,7 @@ export interface BitrixConfig {
   cloud?: CloudConfig;
   autoShiftEndTime?: string; // Час в формате "HH:mm"
   paymentFormat?: 'rate' | 'salary';
+  suppliers?: string[];
 }
 
 export interface BitrixFunnel {
@@ -110,6 +146,15 @@ export interface BitrixFieldMapping {
   clientName: string;
   deadline: string;
   description: string;
+  budgetChipboard?: string;
+  budgetChipboardReserve?: string;
+  budgetMdf?: string;
+  budgetMdfReserve?: string;
+  budgetFacades?: string;
+  budgetFittings?: string;
+  budgetCountertops?: string;
+  budgetStone?: string;
+  budgetGlassMetal?: string;
 }
 
 export interface Order {
@@ -126,6 +171,17 @@ export interface Order {
   externalStageId?: string;
   externalCategoryId?: string;
   source?: 'MANUAL' | 'BITRIX24';
+  budgets?: {
+    chipboard?: number;
+    chipboardReserve?: number;
+    mdf?: number;
+    mdfReserve?: number;
+    facades?: number;
+    fittings?: number;
+    countertops?: number;
+    stone?: number;
+    glassMetal?: number;
+  };
 }
 
 export interface Task {
@@ -144,4 +200,5 @@ export interface Task {
   details?: Detail[]; 
   packages?: Package[];
   rate?: number;
+  supplyData?: SupplyData;
 }

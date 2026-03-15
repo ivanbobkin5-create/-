@@ -468,8 +468,15 @@ const ProductionBoard: React.FC<ProductionBoardProps> = ({
         const stageIdx = STAGE_SEQUENCE.indexOf(activeStage);
         let isLocked = false;
         let prevStageLabel = '';
+        
         if (stageIdx > 0) {
-          const prevStage = STAGE_SEQUENCE[stageIdx - 1];
+          let prevStage = STAGE_SEQUENCE[stageIdx - 1];
+          
+          // Custom dependency logic
+          if (activeStage === ProductionStage.ASSEMBLY || activeStage === ProductionStage.PACKAGING) {
+            prevStage = ProductionStage.DRILLING;
+          }
+          
           const prevTask = order.tasks.find(t => t.stage === prevStage);
           if (prevTask && prevTask.status !== TaskStatus.COMPLETED) {
             isLocked = true;

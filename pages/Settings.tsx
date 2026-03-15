@@ -4,7 +4,7 @@ import { BitrixConfig, BitrixFieldMapping } from '../types';
 import { 
   Share2, Link as LinkIcon, Save, 
   RefreshCw, CheckCircle2, Layout, Database, 
-  Calendar, ChevronRight, Filter, List, Clock, ChevronDown
+  Calendar, ChevronRight, Filter, List, Clock, ChevronDown, X, Plus
 } from 'lucide-react';
 
 interface SettingsProps {
@@ -22,6 +22,7 @@ const Settings: React.FC<SettingsProps> = ({ config, setConfig }) => {
   const [fieldSearch, setFieldSearch] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [selectedFunnelId, setSelectedFunnelId] = useState<string>("0");
+  const [newSupplier, setNewSupplier] = useState('');
 
   const safeFetchJson = async (url: string, options: RequestInit, retries = 5, delay = 2000): Promise<any> => {
     try {
@@ -163,7 +164,16 @@ const Settings: React.FC<SettingsProps> = ({ config, setConfig }) => {
     { key: 'orderNumber', label: 'Номер заказа', desc: 'Обычно ID сделки или системное поле' },
     { key: 'clientName', label: 'Имя клиента', desc: 'Название сделки или ФИО контакта' },
     { key: 'deadline', label: 'Крайний срок', desc: 'Дата завершения или кастомное поле даты' },
-    { key: 'description', label: 'Описание/Комментарий', desc: 'Текстовое поле с деталями заказа' }
+    { key: 'description', label: 'Описание/Комментарий', desc: 'Текстовое поле с деталями заказа' },
+    { key: 'budgetChipboard', label: 'Расходы корпус', desc: 'ЛДСП/Кромка/ХДФ' },
+    { key: 'budgetChipboardReserve', label: 'Запас на корпус ДОП ЛИСТЫ', desc: 'ЛДСП/Кромка/ХДФ (запас)' },
+    { key: 'budgetMdf', label: 'Расходы фасады МФ', desc: 'ЛДСП/Кромка/ХДФ (МДФ)' },
+    { key: 'budgetMdfReserve', label: 'Запас на фасады МФ ДОП ЛИСТЫ', desc: 'ЛДСП/Кромка/ХДФ (запас МДФ)' },
+    { key: 'budgetFacades', label: 'Расходы фасады заказные', desc: 'Фасады' },
+    { key: 'budgetFittings', label: 'Расходы фурнитура', desc: 'Фурнитура' },
+    { key: 'budgetCountertops', label: 'Расходы столешницы и стеновые', desc: 'Столешницы и стеновые' },
+    { key: 'budgetStone', label: 'Расходы столешницы камень', desc: 'Столешницы и стеновые (камень/компакт)' },
+    { key: 'budgetGlassMetal', label: 'Расходы RIAL PRO', desc: 'Стекла/металл' }
   ];
 
   const handleSave = () => {
@@ -342,6 +352,54 @@ const Settings: React.FC<SettingsProps> = ({ config, setConfig }) => {
                     <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Дополнительно</h4>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                        <div className="relative w-full md:col-span-2"><Layout className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={18} /><input type="text" value={config.portalName || ''} onChange={e => setConfig({ ...config, portalName: e.target.value })} placeholder="Название портала" className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold outline-none" /></div>
+                    </div>
+                 </div>
+
+                 <div className="space-y-4">
+                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Поставщики (для снабжения)</h4>
+                    <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-4">
+                      <div className="flex gap-2">
+                        <input 
+                          type="text" 
+                          value={newSupplier} 
+                          onChange={e => setNewSupplier(e.target.value)} 
+                          onKeyDown={e => {
+                            if (e.key === 'Enter' && newSupplier.trim()) {
+                              setConfig({ ...config, suppliers: [...(config.suppliers || []), newSupplier.trim()] });
+                              setNewSupplier('');
+                            }
+                          }}
+                          placeholder="Новый поставщик..." 
+                          className="flex-1 px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm outline-none focus:border-blue-500" 
+                        />
+                        <button 
+                          onClick={() => {
+                            if (newSupplier.trim()) {
+                              setConfig({ ...config, suppliers: [...(config.suppliers || []), newSupplier.trim()] });
+                              setNewSupplier('');
+                            }
+                          }}
+                          className="p-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors"
+                        >
+                          <Plus size={20} />
+                        </button>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {(config.suppliers || []).map((supplier, idx) => (
+                          <div key={idx} className="flex items-center gap-2 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-sm font-medium text-slate-700 shadow-sm">
+                            {supplier}
+                            <button 
+                              onClick={() => setConfig({ ...config, suppliers: config.suppliers!.filter((_, i) => i !== idx) })}
+                              className="text-slate-400 hover:text-red-500 transition-colors"
+                            >
+                              <X size={14} />
+                            </button>
+                          </div>
+                        ))}
+                        {(!config.suppliers || config.suppliers.length === 0) && (
+                          <div className="text-xs text-slate-400 italic">Нет добавленных поставщиков</div>
+                        )}
+                      </div>
                     </div>
                  </div>
               </div>

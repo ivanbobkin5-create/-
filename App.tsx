@@ -19,6 +19,7 @@ import Reports from './pages/Reports';
 import Salaries from './pages/Salaries';
 import UsersManagement from './pages/UsersManagement';
 import Archive from './pages/Archive';
+import Supply from './pages/Supply';
 import LoginPage from './pages/LoginPage';
 import SiteAdmin from './pages/SiteAdmin';
 import Settings from './pages/Settings';
@@ -221,7 +222,28 @@ const App: React.FC = () => {
     try {
       const cloudData = await dbService.loadFromCloud(cloudCfg, user.companyId);
       if (cloudData) {
-        if (cloudData.orders) setOrders(cloudData.orders);
+        if (cloudData.orders) {
+          const migratedOrders = cloudData.orders.map((o: Order) => {
+            const hasMaterialTask = o.tasks.some(t => t.stage === ProductionStage.MATERIAL_ORDER);
+            if (!hasMaterialTask) {
+              return {
+                ...o,
+                tasks: [
+                  ...o.tasks,
+                  {
+                    id: 'T-' + Math.random().toString(36).substr(2, 9),
+                    orderId: o.id,
+                    stage: ProductionStage.MATERIAL_ORDER,
+                    status: TaskStatus.PENDING,
+                    title: 'Заказ материалов'
+                  }
+                ]
+              };
+            }
+            return o;
+          });
+          setOrders(migratedOrders);
+        }
         if (cloudData.staff) setStaff(cloudData.staff);
         if (cloudData.sessions) setSessions(cloudData.sessions);
         if (cloudData.shifts) setShifts(cloudData.shifts);
@@ -266,7 +288,7 @@ const App: React.FC = () => {
           method: 'POST',
           body: {
             filter: { "STAGE_ID": triggerStages },
-            select: ["ID", "TITLE", "CLOSEDATE", "ADDITIONAL_INFO", "COMMENTS"]
+            select: ["*", "UF_*"]
           }
         })
       });
@@ -327,7 +349,22 @@ const App: React.FC = () => {
 
       // 3. Smart Merge with existing orders
       setOrders(prevOrders => {
-        const updatedOrders = [...prevOrders];
+        const syncedDealIds = new Set(dealsWithTasks.map(d => String(d.deal.ID)));
+        
+        // Filter out orders that are from Bitrix24 but no longer in the sync response
+        // AND are not yet completed (Shipment stage not completed)
+        const filteredOrders = prevOrders.filter(order => {
+          if (order.source !== 'BITRIX24') return true;
+          if (order.externalId && syncedDealIds.has(order.externalId)) return true;
+          
+          // Check if order is completed
+          const shipmentTask = order.tasks.find(t => t.stage === ProductionStage.SHIPMENT);
+          const isCompleted = shipmentTask?.status === TaskStatus.COMPLETED;
+          
+          return isCompleted; // Keep if completed, remove if not in sync and not completed
+        });
+
+        const updatedOrders = [...filteredOrders];
         
         dealsWithTasks.forEach(({ deal, b24Tasks }) => {
           const dealId = String(deal.ID);
@@ -343,7 +380,8 @@ const App: React.FC = () => {
             const b24Title = (bt.title || bt.TITLE || '').toLowerCase();
             
             let stage: ProductionStage | null = null;
-            if (b24Title.includes('распил')) stage = ProductionStage.SAWING;
+            if (b24Title.includes('заказ материалов')) stage = ProductionStage.MATERIAL_ORDER;
+            else if (b24Title.includes('распил')) stage = ProductionStage.SAWING;
             else if (b24Title.includes('кромление')) stage = ProductionStage.EDGE_BANDING;
             else if (b24Title.includes('присадка')) stage = ProductionStage.DRILLING;
             else if (b24Title.includes('упаковка')) stage = ProductionStage.PACKAGING;
@@ -394,18 +432,77 @@ const App: React.FC = () => {
           });
 
           if (existingOrderIndex !== -1) {
+            const existingOrder = updatedOrders[existingOrderIndex];
+            
+            // Ensure MATERIAL_ORDER task exists
+            const hasMaterialTask = tasks.some(t => t.stage === ProductionStage.MATERIAL_ORDER);
+            if (!hasMaterialTask) {
+              const existingMaterialTask = existingOrder.tasks.find(t => t.stage === ProductionStage.MATERIAL_ORDER);
+              if (existingMaterialTask) {
+                tasks.push(existingMaterialTask);
+              } else {
+                tasks.push({
+                  id: 'T-' + Math.random().toString(36).substr(2, 9),
+                  orderId: existingOrder.id,
+                  stage: ProductionStage.MATERIAL_ORDER,
+                  status: TaskStatus.PENDING,
+                  title: 'Заказ материалов'
+                });
+              }
+            }
+
+            const getBudget = (key?: string) => key && deal[key] ? Number(deal[key]) || 0 : undefined;
+            const budgets = {
+              chipboard: getBudget(bitrixConfig.fieldMapping.budgetChipboard),
+              chipboardReserve: getBudget(bitrixConfig.fieldMapping.budgetChipboardReserve),
+              mdf: getBudget(bitrixConfig.fieldMapping.budgetMdf),
+              mdfReserve: getBudget(bitrixConfig.fieldMapping.budgetMdfReserve),
+              facades: getBudget(bitrixConfig.fieldMapping.budgetFacades),
+              fittings: getBudget(bitrixConfig.fieldMapping.budgetFittings),
+              countertops: getBudget(bitrixConfig.fieldMapping.budgetCountertops),
+              stone: getBudget(bitrixConfig.fieldMapping.budgetStone),
+              glassMetal: getBudget(bitrixConfig.fieldMapping.budgetGlassMetal),
+            };
+
             // Update existing order
             updatedOrders[existingOrderIndex] = {
-              ...updatedOrders[existingOrderIndex],
-              clientName: deal.TITLE || updatedOrders[existingOrderIndex].clientName,
-              deadline: deal.CLOSEDATE ? deal.CLOSEDATE.split('T')[0] : updatedOrders[existingOrderIndex].deadline,
-              description: deal.ADDITIONAL_INFO || deal.COMMENTS || updatedOrders[existingOrderIndex].description,
+              ...existingOrder,
+              clientName: deal.TITLE || existingOrder.clientName,
+              deadline: deal.CLOSEDATE ? deal.CLOSEDATE.split('T')[0] : existingOrder.deadline,
+              description: deal.ADDITIONAL_INFO || deal.COMMENTS || existingOrder.description,
               externalStageId: deal.STAGE_ID,
-              tasks: tasks.map(t => ({ ...t, orderId: updatedOrders[existingOrderIndex].id }))
+              budgets,
+              tasks: tasks.map(t => ({ ...t, orderId: existingOrder.id }))
             };
           } else {
             // Create new order
             const newOrderId = 'O-' + Math.random().toString(36).substr(2, 9);
+            
+            // Ensure MATERIAL_ORDER task exists
+            const hasMaterialTask = tasks.some(t => t.stage === ProductionStage.MATERIAL_ORDER);
+            if (!hasMaterialTask) {
+              tasks.push({
+                id: 'T-' + Math.random().toString(36).substr(2, 9),
+                orderId: newOrderId,
+                stage: ProductionStage.MATERIAL_ORDER,
+                status: TaskStatus.PENDING,
+                title: 'Заказ материалов'
+              });
+            }
+
+            const getBudget = (key?: string) => key && deal[key] ? Number(deal[key]) || 0 : undefined;
+            const budgets = {
+              chipboard: getBudget(bitrixConfig.fieldMapping.budgetChipboard),
+              chipboardReserve: getBudget(bitrixConfig.fieldMapping.budgetChipboardReserve),
+              mdf: getBudget(bitrixConfig.fieldMapping.budgetMdf),
+              mdfReserve: getBudget(bitrixConfig.fieldMapping.budgetMdfReserve),
+              facades: getBudget(bitrixConfig.fieldMapping.budgetFacades),
+              fittings: getBudget(bitrixConfig.fieldMapping.budgetFittings),
+              countertops: getBudget(bitrixConfig.fieldMapping.budgetCountertops),
+              stone: getBudget(bitrixConfig.fieldMapping.budgetStone),
+              glassMetal: getBudget(bitrixConfig.fieldMapping.budgetGlassMetal),
+            };
+
             updatedOrders.push({
               id: newOrderId,
               externalId: dealId,
@@ -418,6 +515,7 @@ const App: React.FC = () => {
               priority: 'MEDIUM',
               companyId: user.companyId,
               source: 'BITRIX24',
+              budgets,
               tasks: tasks.map(t => ({ ...t, orderId: newOrderId }))
             });
           }
@@ -760,12 +858,22 @@ const App: React.FC = () => {
     }
   }, [bitrixConfig, syncTaskToBitrix]);
 
-  const syncTaskFieldsToBitrix = useCallback(async (taskId: string, responsibleId: string | undefined, accompliceIds: string[]) => {
+  const syncTaskFieldsToBitrix = useCallback(async (taskId: string, responsibleId: string | undefined, accompliceIds: string[], deadline?: string) => {
     if (!bitrixConfig.enabled || !bitrixConfig.webhookUrl) return;
     const baseUrl = bitrixConfig.webhookUrl.replace(/\/$/, '');
     
     const b24ResponsibleId = staff.find(s => s.id === responsibleId)?.b24Id;
     const b24AccompliceIds = accompliceIds.map(aid => staff.find(s => s.id === aid)?.b24Id).filter(Boolean);
+
+    const fields: any = { 
+      RESPONSIBLE_ID: b24ResponsibleId, 
+      ACCOMPLICES: b24AccompliceIds 
+    };
+
+    if (deadline) {
+      // Bitrix24 expects ISO format. If we have YYYY-MM-DD, we append time.
+      fields.DEADLINE = deadline.includes('T') ? deadline : `${deadline}T18:00:00+03:00`;
+    }
 
     await addToQueue(() => safeFetchJson('/api/b24-proxy', {
       method: 'POST',
@@ -775,10 +883,7 @@ const App: React.FC = () => {
         method: 'POST',
         body: { 
           taskId, 
-          fields: { 
-            RESPONSIBLE_ID: b24ResponsibleId, 
-            ACCOMPLICES: b24AccompliceIds 
-          } 
+          fields
         }
       })
     }));
@@ -862,7 +967,8 @@ const App: React.FC = () => {
           } else if (status === TaskStatus.PAUSED) {
             syncTaskActionToBitrix(updatedOrder, updatedTask, user, 'pause', comment || `Приостановил выполнение этапа: ${stageLabel}`);
           } else if (status === TaskStatus.COMPLETED) {
-            syncTaskActionToBitrix(updatedOrder, updatedTask, user, 'complete', comment || `Завершил этап: ${stageLabel}`);
+            // Send report but skip the generic "Completed" comment to avoid duplication
+            syncTaskActionToBitrix(updatedOrder, updatedTask, user, 'complete');
             if (updatedTask.externalTaskId) {
               syncTaskReportToBitrix(updatedTask.externalTaskId, updatedTask);
             }
@@ -879,7 +985,6 @@ const App: React.FC = () => {
       let updatedTask: Task | undefined;
       let updatedOrder: Order | undefined;
 
-      // Calculate new state first
       setOrders(prev => {
         const newOrders = prev.map(o => {
           if (o.id !== orderId) return o;
@@ -899,11 +1004,17 @@ const App: React.FC = () => {
       setIsDirty(true);
 
       // Perform sync outside of setOrders to avoid state issues
-      // We use the captured updatedOrder and updatedTask
-      if (bitrixConfig.enabled && updatedOrder && updatedTask && updatedTask.externalTaskId) {
-        await syncTaskFieldsToBitrix(updatedTask.externalTaskId, updatedTask.assignedTo, updatedTask.accompliceIds || []);
+      if (bitrixConfig.enabled && updatedOrder && updatedTask) {
+        let b24TaskId = updatedTask.externalTaskId;
+        if (!b24TaskId) {
+          b24TaskId = await syncTaskToBitrix(updatedOrder, updatedTask);
+        }
+        
+        if (b24TaskId) {
+          await syncTaskFieldsToBitrix(b24TaskId, updatedTask.assignedTo, updatedTask.accompliceIds || [], updatedTask.plannedDate);
+        }
       }
-    }, [syncTaskToBitrix, bitrixConfig.enabled, syncTaskFieldsToBitrix]);
+    }, [syncTaskToBitrix, bitrixConfig.enabled, syncTaskFieldsToBitrix, orders]);
 
   const onCreateB24Task = useCallback(async (orderId: string, taskId: string) => {
     const order = orders.find(o => o.id === orderId);
@@ -1099,6 +1210,31 @@ const App: React.FC = () => {
               isBitrixEnabled={bitrixConfig.enabled} staff={myStaff} shifts={shifts} user={user} bitrixConfig={bitrixConfig}
             />
           )}
+          {currentPage === 'supply' && (
+            <Supply 
+              orders={myOrders}
+              bitrixConfig={bitrixConfig}
+              onUpdateSupplyData={(orderId, taskId, category, data) => {
+                setOrders(prev => prev.map(o => {
+                  if (o.id !== orderId) return o;
+                  return {
+                    ...o,
+                    tasks: o.tasks.map(t => {
+                      if (t.id !== taskId) return t;
+                      return {
+                        ...t,
+                        supplyData: {
+                          ...(t.supplyData || {}),
+                          [category]: data
+                        }
+                      };
+                    })
+                  };
+                }));
+                setIsDirty(true);
+              }}
+            />
+          )}
           {currentPage === 'schedule' && <Schedule staff={myStaff} currentUser={user} shifts={shifts} onToggleShift={(uid, d) => {
             // Проверка прав: Админ, Нач. цеха или сам сотрудник
             const canEdit = user.role === UserRole.COMPANY_ADMIN || user.isProductionHead || user.id === uid;
@@ -1118,9 +1254,37 @@ const App: React.FC = () => {
           {currentPage === 'production' && <ProductionBoard orders={myOrders} onUpdateTask={(oid, tid, st, comm) => { 
             updateTaskStatus(oid, tid, st, comm); 
             setIsDirty(true);
-          }} onAddAccomplice={(oid, tid, uid) => {
-            setOrders(prev => prev.map(o => o.id !== oid ? o : { ...o, tasks: o.tasks.map(t => t.id !== tid ? t : { ...t, accompliceIds: [...new Set([...(t.accompliceIds || []), uid])] }) }));
+          }} onAddAccomplice={async (oid, tid, uid) => {
+            let taskToSync: Task | undefined;
+            let orderToSync: Order | undefined;
+
+            setOrders(prev => {
+              const newOrders = prev.map(o => {
+                if (o.id !== oid) return o;
+                const newTasks = o.tasks.map(t => {
+                  if (t.id !== tid) return t;
+                  const ut = { ...t, assignedTo: uid, accompliceIds: [...new Set([...(t.accompliceIds || []), uid])] };
+                  taskToSync = ut;
+                  return ut;
+                });
+                const uo = { ...o, tasks: newTasks };
+                orderToSync = uo;
+                return uo;
+              });
+              return newOrders;
+            });
             setIsDirty(true);
+            
+            // Sync to Bitrix24
+            if (bitrixConfig.enabled && taskToSync && orderToSync) {
+              let taskId = taskToSync.externalTaskId;
+              if (!taskId) {
+                taskId = await syncTaskToBitrix(orderToSync, taskToSync);
+              }
+              if (taskId) {
+                await syncTaskFieldsToBitrix(taskId, taskToSync.assignedTo, taskToSync.accompliceIds || [], taskToSync.plannedDate);
+              }
+            }
           }} onUpdateDetails={(oid, tid, d, p) => {
             setOrders(prev => prev.map(o => o.id !== oid ? o : { ...o, tasks: o.tasks.map(t => t.id === tid ? { ...t, details: d, packages: p || t.packages } : t) }));
             setIsDirty(true);
