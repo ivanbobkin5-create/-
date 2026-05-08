@@ -52,6 +52,27 @@ const INITIAL_BITRIX_CONFIG: BitrixConfig = {
 };
 
 const safeFetchJson = async (url: string, options: RequestInit, retries = 5, delay = 3000): Promise<{ data: any, ok: boolean, status: number }> => {
+  if (url === '/api/b24-proxy' && typeof window !== 'undefined' && (window as any).BX24) {
+    try {
+      const proxyParams = JSON.parse(options.body as string);
+      const match = proxyParams.url.match(/\/([a-z0-9_.]+)\.json/i);
+      if (match) {
+        const b24Method = match[1];
+        return new Promise((resolve) => {
+          (window as any).BX24.callMethod(b24Method, proxyParams.body || {}, (res: any) => {
+            if (res.error()) {
+              resolve({ data: { message: res.error() }, ok: false, status: 500 });
+            } else {
+              resolve({ data: { result: res.data() }, ok: true, status: 200 });
+            }
+          });
+        });
+      }
+    } catch (e) {
+      console.error('DEBUG: BX24 intercept error', e);
+    }
+  }
+
   try {
     console.log(`DEBUG: Fetching ${url} with options:`, options);
     const response = await fetch(url, options);
@@ -73,7 +94,7 @@ const safeFetchJson = async (url: string, options: RequestInit, retries = 5, del
         return { data: JSON.parse(text), ok: response.ok, status: response.status };
       } catch (e) {
         console.error(`DEBUG: JSON parse error for ${url}. Text: ${text}`);
-        throw new Error(`Ошибка обработки JSON (${response.status}): ${text.substring(0, 50)}...`);
+        throw new Error(`Ошибка обработки JSON (${response.status}): ${text.substring(0, 50)}...`, { cause: e });
       }
     }
     return { data: text, ok: response.ok, status: response.status };
@@ -160,41 +181,42 @@ const App: React.FC = () => {
   const [currentPage, setCurrentPage] = useState('dashboard');
   const [isSyncing, setIsSyncing] = useState(false);
   const [dbStatus, setDbStatus] = useState<'loading' | 'ready'>('loading');
+  const [wsStatus, setWsStatus] = useState<'connected' | 'disconnected'>('disconnected');
   const [hasAttemptedInitialLoad, setHasAttemptedInitialLoad] = useState(false);
   const isInitialLoading = React.useRef(false);
 
-  const showToast = (msg: string, type: 'success' | 'error' = 'success') => {
+  const showToast = useCallback((msg: string, type: 'success' | 'error' = 'success') => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3000);
-  };
+  }, []);
 
   const [lastSaved, setLastSaved] = useState<string | null>(null);
   const [isDirty, setIsDirty] = useState(false);
 
   const syncWithCloud = useCallback(async (forcedData?: any) => {
     if (!user) return;
-    
     if (user.role === UserRole.SITE_ADMIN) return;
+    if (!user.companyId) return;
 
-    const cloudCfg = bitrixConfig.cloud || INITIAL_BITRIX_CONFIG.cloud!;
     const dataToSave = forcedData || { orders, staff, sessions, shifts, bitrixConfig };
     
     setIsSyncing(true);
     try {
-      const success = await dbService.saveToCloud(cloudCfg, dataToSave, user.companyId);
+      // В Firebase режиме мы вызываем saveToCloud, который теперь работает через Firestore
+      const success = await dbService.saveToCloud(bitrixConfig.cloud!, dataToSave, user.companyId);
       if (success) {
         setLastSaved(new Date().toLocaleTimeString());
         setIsDirty(false);
       } else {
-        showToast("Ошибка сохранения", "error");
+        showToast("Ошибка сохранения в Firebase", "error");
       }
     } catch (e) {
-      console.error("Save to cloud failed", e);
-      showToast("Ошибка сети", "error");
+      console.error("Save to firebase failed", e);
+      showToast("Ошибка соединения с Firebase", "error");
     } finally {
       setIsSyncing(false);
     }
-  }, [orders, staff, sessions, shifts, bitrixConfig.cloud, user]);
+  }, [orders, staff, sessions, shifts, bitrixConfig, user]);
 
   // Авто-синхронизация при изменениях (с задержкой 2 секунды)
   useEffect(() => {
@@ -212,59 +234,45 @@ const App: React.FC = () => {
       return;
     }
     
-    if (isInitialLoading.current && !silent) return;
+    // В Firebase режиме начальная загрузка происходит через connect (onSnapshot)
+    // Но мы можем оставить этот хук для индикации состояния готовности
     if (!silent) {
-      isInitialLoading.current = true;
-      setDbStatus('loading');
+       setDbStatus('loading');
     }
+    
+    // Эмуляция завершения загрузки (Firestore connect сам переставит статус)
+    setTimeout(() => {
+       if (!silent) {
+         setDbStatus('ready');
+         setHasAttemptedInitialLoad(true);
+       }
+    }, 500);
 
-    const cloudCfg = bitrixConfig.cloud || INITIAL_BITRIX_CONFIG.cloud!;
-    try {
-      const cloudData = await dbService.loadFromCloud(cloudCfg, user.companyId);
-      if (cloudData) {
-        if (cloudData.orders) {
-          const migratedOrders = cloudData.orders.map((o: Order) => {
-            const hasMaterialTask = o.tasks.some(t => t.stage === ProductionStage.MATERIAL_ORDER);
-            if (!hasMaterialTask) {
-              return {
-                ...o,
-                tasks: [
-                  ...o.tasks,
-                  {
-                    id: 'T-' + Math.random().toString(36).substr(2, 9),
-                    orderId: o.id,
-                    stage: ProductionStage.MATERIAL_ORDER,
-                    status: TaskStatus.PENDING,
-                    title: 'Заказ материалов'
-                  }
-                ]
-              };
-            }
-            return o;
-          });
-          setOrders(migratedOrders);
+  }, [user?.id, user?.companyId]);
+
+  // Firebase Real-time синхронизация
+  useEffect(() => {
+    if (user && user.companyId && user.role !== UserRole.SITE_ADMIN) {
+      const disconnect = dbService.connect(user.companyId, (info) => {
+        if (info.type === 'orders') setOrders(info.data);
+        if (info.type === 'staff') setStaff(info.data);
+        if (info.type === 'sessions') setSessions(info.data);
+        if (info.type === 'shifts') setShifts(info.data);
+        if (info.type === 'company_config') {
+           setBitrixConfig(prev => {
+              const updated = { ...prev, ...info.data };
+              localStorage.setItem(STORAGE_KEYS.BITRIX_CONFIG, JSON.stringify(updated));
+              return updated;
+           });
         }
-        if (cloudData.staff) setStaff(cloudData.staff);
-        if (cloudData.sessions) setSessions(cloudData.sessions);
-        if (cloudData.shifts) setShifts(cloudData.shifts);
-        
-        if (cloudData.bitrixConfig) {
-          setBitrixConfig(cloudData.bitrixConfig);
-          localStorage.setItem(STORAGE_KEYS.BITRIX_CONFIG, JSON.stringify(cloudData.bitrixConfig));
-        }
-        setLastSaved(new Date().toLocaleTimeString());
-        setIsDirty(false);
-      }
-    } catch (e) {
-      console.error("Load from cloud failed", e);
-    } finally {
-      if (!silent) {
-        isInitialLoading.current = false;
-        setHasAttemptedInitialLoad(true);
-      }
-      setDbStatus('ready');
+        setDbStatus('ready');
+      }, (status) => {
+        setWsStatus(status);
+        if (status === 'connected') setDbStatus('ready');
+      });
+      return () => disconnect();
     }
-  }, [user?.id, user?.companyId, bitrixConfig.cloud?.apiToken, bitrixConfig.cloud?.enabled]);
+  }, [user?.id, user?.companyId]);
 
   const onSyncBitrix = useCallback(async () => {
     if (!bitrixConfig.enabled || !bitrixConfig.webhookUrl || !user) return 0;
@@ -319,7 +327,7 @@ const App: React.FC = () => {
           })
         });
         
-        let b24Tasks = Array.isArray(tasksData.result?.tasks) ? tasksData.result.tasks : (Array.isArray(tasksData.result) ? tasksData.result : []);
+        const b24Tasks = Array.isArray(tasksData.result?.tasks) ? tasksData.result.tasks : (Array.isArray(tasksData.result) ? tasksData.result : []);
 
         // Second try: search by order number in title if no tasks found or to find more
         const { data: groupTasksData } = await safeFetchJson('/api/b24-proxy', {
@@ -371,12 +379,13 @@ const App: React.FC = () => {
           const existingOrderIndex = updatedOrders.findIndex(o => o.externalId === dealId);
           
           const tasks: Task[] = b24Tasks.flatMap((bt: any): Task[] => {
-            const b24Status = parseInt(bt.REAL_STATUS);
+            const b24Status = parseInt(bt.REAL_STATUS || bt.realStatus || '0');
             const b24Id = String(bt.ID || bt.id);
-            const b24ResponsibleId = String(bt.RESPONSIBLE_ID);
-            const b24Accomplices = Array.isArray(bt.ACCOMPLICES) ? bt.ACCOMPLICES.map(String) : [];
-            const b24Deadline = bt.DEADLINE ? bt.DEADLINE.split('T')[0] : undefined;
-            const b24Description = bt.DESCRIPTION || undefined;
+            const b24ResponsibleId = String(bt.RESPONSIBLE_ID || bt.responsibleId);
+            const b24Accomplices = Array.isArray(bt.ACCOMPLICES || bt.accomplices) ? (bt.ACCOMPLICES || bt.accomplices).map(String) : [];
+            const deadlineVal = bt.DEADLINE || bt.deadline;
+            const b24Deadline = deadlineVal ? deadlineVal.split('T')[0] : undefined;
+            const b24Description = bt.DESCRIPTION || bt.description || undefined;
             const b24Title = (bt.title || bt.TITLE || '').toLowerCase();
             
             let stage: ProductionStage | null = null;
@@ -401,10 +410,15 @@ const App: React.FC = () => {
 
             // If order exists, try to find existing task to preserve its data
             if (existingOrderIndex !== -1) {
-              const existingTask = updatedOrders[existingOrderIndex].tasks.find(t => t.externalTaskId === b24Id);
+              const existingTasks = updatedOrders[existingOrderIndex].tasks;
+              // Try to match by externalTaskId first, then by stage (for MATERIAL_ORDER)
+              const existingTask = existingTasks.find(t => t.externalTaskId === b24Id) || 
+                                 (stage === ProductionStage.MATERIAL_ORDER ? existingTasks.find(t => t.stage === ProductionStage.MATERIAL_ORDER) : undefined);
+              
               if (existingTask) {
                 return [{
                   ...existingTask,
+                  externalTaskId: b24Id, // Ensure it has the ID now if it didn't
                   status: status === TaskStatus.COMPLETED ? TaskStatus.COMPLETED : (status === TaskStatus.IN_PROGRESS ? TaskStatus.IN_PROGRESS : existingTask.status),
                   assignedTo: assignedTo || existingTask.assignedTo,
                   accompliceIds: accompliceIds.length > 0 ? accompliceIds : existingTask.accompliceIds,
@@ -625,18 +639,11 @@ const App: React.FC = () => {
     }
   }, [user, hasAttemptedInitialLoad, loadDataIfLoggedIn, bitrixConfig.enabled, bitrixConfig.webhookUrl]);
 
-  // Background sync effect
+  // Удаляем интервал периодической загрузки, так как у нас есть onSnapshot
   useEffect(() => {
     if (!user || user.role === UserRole.SITE_ADMIN) return;
-
-    const interval = setInterval(() => {
-      if (!isSyncing && !isDirty) {
-        loadDataIfLoggedIn(true);
-      }
-    }, 30000);
-
-    return () => clearInterval(interval);
-  }, [user, isSyncing, isDirty, loadDataIfLoggedIn]);
+    // Оставляем пустым или удаляем
+  }, [user]);
 
 
   const syncTaskToBitrix = useCallback(async (order: Order, task: Task): Promise<string | undefined> => {
@@ -686,7 +693,13 @@ const App: React.FC = () => {
       }
 
       if (task.plannedDate) {
-        fields.DEADLINE = `${task.plannedDate}T18:00:00`;
+        let formattedDeadline = task.plannedDate;
+        if (!task.plannedDate.includes('T')) {
+          formattedDeadline = `${task.plannedDate}T18:00:00+03:00`;
+        } else if (!task.plannedDate.includes('+') && !task.plannedDate.includes('Z')) {
+          formattedDeadline = `${task.plannedDate}+03:00`;
+        }
+        fields.DEADLINE = formattedDeadline;
       }
       
       if (task.externalTaskId) {
@@ -866,13 +879,38 @@ const App: React.FC = () => {
     const b24AccompliceIds = accompliceIds.map(aid => staff.find(s => s.id === aid)?.b24Id).filter(Boolean);
 
     const fields: any = { 
-      RESPONSIBLE_ID: b24ResponsibleId, 
+      RESPONSIBLE_ID: b24ResponsibleId || undefined, 
       ACCOMPLICES: b24AccompliceIds 
     };
 
+    if (!b24ResponsibleId) {
+      console.warn("No RESPONSIBLE_ID found for task sync. Fetching current user from Bitrix as fallback...");
+      try {
+        const { data: curUserData } = await addToQueue(() => safeFetchJson('/api/b24-proxy', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            url: `${baseUrl}/user.current.json`,
+            method: 'POST'
+          })
+        }));
+        if (curUserData.result?.ID) {
+          fields.RESPONSIBLE_ID = String(curUserData.result.ID);
+        }
+      } catch (err) {
+        console.error("Failed to fetch current user from Bitrix for fallback", err);
+      }
+    }
+
     if (deadline) {
       // Bitrix24 expects ISO format. If we have YYYY-MM-DD, we append time.
-      fields.DEADLINE = deadline.includes('T') ? deadline : `${deadline}T18:00:00+03:00`;
+      let formattedDeadline = deadline;
+      if (!deadline.includes('T')) {
+        formattedDeadline = `${deadline}T18:00:00+03:00`;
+      } else if (!deadline.includes('+') && !deadline.includes('Z')) {
+        formattedDeadline = `${deadline}+03:00`;
+      }
+      fields.DEADLINE = formattedDeadline;
     }
 
     await addToQueue(() => safeFetchJson('/api/b24-proxy', {
@@ -887,6 +925,7 @@ const App: React.FC = () => {
         }
       })
     }));
+    console.log(`Updated Bitrix24 task ${taskId} fields:`, fields);
   }, [bitrixConfig, staff]);
 
   const syncTaskReportToBitrix = useCallback(async (taskId: string, task: Task) => {
@@ -913,8 +952,18 @@ const App: React.FC = () => {
     }));
   }, [bitrixConfig]);
 
-  const onAddB24Comment = useCallback(async (taskId: string, message: string) => {
+  const onAddB24Comment = useCallback(async (order: Order, task: Task, message: string) => {
     if (!bitrixConfig.enabled || !bitrixConfig.webhookUrl) return;
+    
+    let taskId = task.externalTaskId;
+    if (!taskId) {
+        taskId = await syncTaskToBitrix(order, task);
+    }
+    if (!taskId) {
+        console.error("Could not sync task to Bitrix24");
+        return;
+    }
+
     try {
       const baseUrl = bitrixConfig.webhookUrl.replace(/\/$/, '');
       await addToQueue(() => safeFetchJson('/api/b24-proxy', {
@@ -935,7 +984,7 @@ const App: React.FC = () => {
     } catch (e) {
       console.error("Failed to add comment to Bitrix24", e);
     }
-  }, [bitrixConfig, user]);
+  }, [bitrixConfig, user, syncTaskToBitrix]);
 
     const updateTaskStatus = useCallback((orderId: string, taskId: string, status: TaskStatus | 'RESUME', comment?: string) => {
       setOrders(prev => {
@@ -998,23 +1047,29 @@ const App: React.FC = () => {
           updatedOrder = uo;
           return uo;
         });
+
+        // Perform sync inside setOrders functional update is tricky for async, 
+        // but we can trigger it after state update if we use a ref or just do it here since we have the data.
+        if (bitrixConfig.enabled && updatedOrder && updatedTask) {
+          const taskToSync = updatedTask;
+          const orderToSync = updatedOrder;
+          
+          (async () => {
+            let b24TaskId = taskToSync.externalTaskId;
+            if (!b24TaskId) {
+              b24TaskId = await syncTaskToBitrix(orderToSync, taskToSync);
+            }
+            
+            if (b24TaskId) {
+              await syncTaskFieldsToBitrix(b24TaskId, taskToSync.assignedTo, taskToSync.accompliceIds || [], taskToSync.plannedDate);
+            }
+          })();
+        }
+
         return newOrders;
       });
-
       setIsDirty(true);
-
-      // Perform sync outside of setOrders to avoid state issues
-      if (bitrixConfig.enabled && updatedOrder && updatedTask) {
-        let b24TaskId = updatedTask.externalTaskId;
-        if (!b24TaskId) {
-          b24TaskId = await syncTaskToBitrix(updatedOrder, updatedTask);
-        }
-        
-        if (b24TaskId) {
-          await syncTaskFieldsToBitrix(b24TaskId, updatedTask.assignedTo, updatedTask.accompliceIds || [], updatedTask.plannedDate);
-        }
-      }
-    }, [syncTaskToBitrix, bitrixConfig.enabled, syncTaskFieldsToBitrix, orders]);
+    }, [syncTaskToBitrix, bitrixConfig.enabled, syncTaskFieldsToBitrix]);
 
   const onCreateB24Task = useCallback(async (orderId: string, taskId: string) => {
     const order = orders.find(o => o.id === orderId);
@@ -1036,6 +1091,44 @@ const App: React.FC = () => {
       showToast("Не удалось создать или найти задачу в Битрикс24", "error");
     }
   }, [orders, syncTaskToBitrix, bitrixConfig.webhookUrl]);
+
+  // Автоматическое завершение смен по расписанию
+  useEffect(() => {
+    const checkAutoEnd = () => {
+      if (!bitrixConfig.autoShiftEndTime) return;
+      
+      const [hour, minute] = bitrixConfig.autoShiftEndTime.split(':').map(Number);
+      const now = new Date();
+
+      setSessions(prev => {
+        let changed = false;
+        const updated = prev.map(s => {
+          if (!s.endTime) {
+            const startTime = new Date(s.startTime);
+            const autoEndTime = new Date(startTime);
+            autoEndTime.setHours(hour, minute, 0, 0);
+
+            // Если время автозакрытия для ДНЯ НАЧАЛА смены уже прошло
+            // И сейчас мы находимся в моменте, когда пора закрывать
+            if (now > autoEndTime) {
+              changed = true;
+              return { ...s, endTime: autoEndTime.toISOString() };
+            }
+          }
+          return s;
+        });
+        if (changed) {
+          setIsDirty(true);
+          showToast(`Смены автоматически завершены (лимит: ${bitrixConfig.autoShiftEndTime})`, "success");
+        }
+        return updated;
+      });
+    };
+
+    const interval = setInterval(checkAutoEnd, 60000); // Проверка каждую минуту
+    checkAutoEnd(); 
+    return () => clearInterval(interval);
+  }, [bitrixConfig.autoShiftEndTime, showToast]);
 
   const toggleWorkSession = useCallback(() => {
     if (!user) return;
@@ -1088,13 +1181,6 @@ const App: React.FC = () => {
         if (!email || !pass) return "Введите e-mail и пароль";
         const result = await dbService.login(email, pass);
         if (result.success && result.user) {
-          const data = result.payload;
-          if (data) {
-            setOrders(data.orders || []);
-            setStaff(data.staff || []);
-            setSessions(data.sessions || []);
-            setShifts(data.shifts || {});
-          }
           setUser(result.user);
           localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(result.user));
           return;
@@ -1162,6 +1248,17 @@ const App: React.FC = () => {
             </button>
             <div className="flex flex-col items-end">
               <div className="flex items-center gap-2">
+                {wsStatus === 'connected' ? (
+                  <div className="flex items-center gap-1 text-[8px] font-black text-emerald-500 uppercase" title="Real-time соединение активно">
+                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                    Live
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1 text-[8px] font-black text-rose-500 uppercase" title="Real-time соединение разорвано">
+                    <div className="w-1.5 h-1.5 rounded-full bg-rose-500" />
+                    Offline
+                  </div>
+                )}
                 {isDirty && !isSyncing && (
                   <button 
                     onClick={() => syncWithCloud()}
@@ -1187,7 +1284,7 @@ const App: React.FC = () => {
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
+        <div className={`flex-1 p-8 custom-scrollbar ${['supply', 'production', 'planning'].includes(currentPage) ? 'overflow-hidden flex flex-col' : 'overflow-y-auto'}`}>
           {currentPage === 'dashboard' && <Dashboard orders={myOrders} staff={myStaff} />}
           {currentPage === 'planning' && (
             <Planning 
@@ -1214,6 +1311,10 @@ const App: React.FC = () => {
             <Supply 
               orders={myOrders}
               bitrixConfig={bitrixConfig}
+              onUpdateTask={(oid, tid, st, comm) => {
+                updateTaskStatus(oid, tid, st, comm);
+                setIsDirty(true);
+              }}
               onUpdateSupplyData={(orderId, taskId, category, data) => {
                 setOrders(prev => prev.map(o => {
                   if (o.id !== orderId) return o;
@@ -1233,6 +1334,7 @@ const App: React.FC = () => {
                 }));
                 setIsDirty(true);
               }}
+              onAddSupplyComment={(order: Order, task: Task, comment: string) => onAddB24Comment(order, task, comment)}
             />
           )}
           {currentPage === 'schedule' && <Schedule staff={myStaff} currentUser={user} shifts={shifts} onToggleShift={(uid, d) => {
@@ -1288,7 +1390,7 @@ const App: React.FC = () => {
           }} onUpdateDetails={(oid, tid, d, p) => {
             setOrders(prev => prev.map(o => o.id !== oid ? o : { ...o, tasks: o.tasks.map(t => t.id === tid ? { ...t, details: d, packages: p || t.packages } : t) }));
             setIsDirty(true);
-          }} staff={myStaff} currentUser={user} onAddB24Comment={onAddB24Comment} isShiftActive={true} shifts={shifts} onTriggerShiftFlash={() => {}} bitrixConfig={bitrixConfig} />}
+          }} staff={myStaff} currentUser={user} onAddB24Comment={onAddB24Comment} isShiftActive={sessions.some(s => s.userId === user.id && !s.endTime)} shifts={shifts} onTriggerShiftFlash={() => {}} bitrixConfig={bitrixConfig} />}
           {currentPage === 'salaries' && <Salaries orders={myOrders} staff={myStaff} bitrixConfig={bitrixConfig} shifts={shifts} />}
           {currentPage === 'users' && <UsersManagement staff={myStaff} onSync={onSyncStaff} isBitrixEnabled={bitrixConfig.enabled} bitrixConfig={bitrixConfig} onToggleProduction={uid => {
             setStaff(prev => prev.map(u => u.id === uid ? { ...u, isProduction: !u.isProduction } : u));

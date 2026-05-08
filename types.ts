@@ -43,6 +43,7 @@ export interface SupplyInvoice {
   supplier: string;
   amount: number;
   info: string;
+  paid?: boolean;
 }
 
 export interface SupplyItem {
@@ -61,6 +62,8 @@ export interface Detail {
   id: string;
   code: string; 
   name?: string;
+  material?: string;
+  size?: string;
   quantity?: number; 
   scannedBy?: string; 
   scannedAt: string;

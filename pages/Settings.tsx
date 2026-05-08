@@ -25,6 +25,27 @@ const Settings: React.FC<SettingsProps> = ({ config, setConfig }) => {
   const [newSupplier, setNewSupplier] = useState('');
 
   const safeFetchJson = async (url: string, options: RequestInit, retries = 5, delay = 2000): Promise<any> => {
+    if (url === '/api/b24-proxy' && typeof window !== 'undefined' && (window as any).BX24) {
+      try {
+        const proxyParams = JSON.parse(options.body as string);
+        const match = proxyParams.url.match(/\/([a-z0-9_.]+)\.json/i);
+        if (match) {
+          const b24Method = match[1];
+          return new Promise((resolve) => {
+            (window as any).BX24.callMethod(b24Method, proxyParams.body || {}, (res: any) => {
+              if (res.error()) {
+                resolve({ data: { message: res.error() }, ok: false, status: 500 });
+              } else {
+                resolve({ data: { result: res.data() }, ok: true, status: 200 });
+              }
+            });
+          });
+        }
+      } catch (e) {
+        console.error('DEBUG: BX24 intercept error', e);
+      }
+    }
+
     try {
       const response = await fetch(url, options);
       const contentType = response.headers.get('content-type');
@@ -40,7 +61,7 @@ const Settings: React.FC<SettingsProps> = ({ config, setConfig }) => {
         try {
           return { data: JSON.parse(text), ok: response.ok };
         } catch (e) {
-          throw new Error(`Ошибка обработки JSON (${response.status}): ${text.substring(0, 50)}...`);
+          throw new Error(`Ошибка обработки JSON (${response.status}): ${text.substring(0, 50)}...`, { cause: e });
         }
       }
       

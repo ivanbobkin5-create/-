@@ -3,9 +3,8 @@ import React, { useMemo, useState } from 'react';
 import { Order, User, TaskStatus, Task, ProductionStage, BitrixConfig } from '../types';
 import { STAGE_CONFIG } from '../constants';
 import { 
-  Wallet, TrendingUp, Users, 
-  Calendar, Download, ChevronRight, 
-  Banknote, PieChart, Search, X, Hash, CalendarDays
+  CalendarDays, Download, ChevronRight, 
+  Search, X
 } from 'lucide-react';
 
 const MONTHS = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
@@ -70,7 +69,9 @@ const Salaries: React.FC<{orders: Order[], staff: User[], bitrixConfig?: BitrixC
       const userShifts = shifts[uid] || {};
       const workedShiftsCount = Object.entries(userShifts).filter(([date, isScheduled]) => {
         const d = new Date(date);
-        return isScheduled && d.getMonth() === selectedMonth && d.getFullYear() === selectedYear;
+        const today = new Date();
+        today.setHours(23, 59, 59, 999);
+        return isScheduled && d.getMonth() === selectedMonth && d.getFullYear() === selectedYear && d <= today;
       }).length;
 
       const isSalary = bitrixConfig?.paymentFormat === 'salary';
@@ -92,7 +93,9 @@ const Salaries: React.FC<{orders: Order[], staff: User[], bitrixConfig?: BitrixC
       const userShifts = shifts[s.id] || {};
       const workedShiftsCount = Object.entries(userShifts).filter(([date, isScheduled]) => {
         const d = new Date(date);
-        return isScheduled && d.getMonth() === selectedMonth && d.getFullYear() === selectedYear;
+        const today = new Date();
+        today.setHours(23, 59, 59, 999);
+        return isScheduled && d.getMonth() === selectedMonth && d.getFullYear() === selectedYear && d <= today;
       }).length;
 
       const isSalary = bitrixConfig?.paymentFormat === 'salary';
@@ -111,7 +114,7 @@ const Salaries: React.FC<{orders: Order[], staff: User[], bitrixConfig?: BitrixC
       })
       .filter(s => s.name.toLowerCase().includes(searchTerm.toLowerCase()))
       .sort((a, b) => b.totalEarned - a.totalEarned);
-  }, [orders, staff, selectedMonth, selectedYear, searchTerm]);
+  }, [orders, staff, selectedMonth, selectedYear, searchTerm, bitrixConfig, shifts]);
 
   const selectedStaffDetails = useMemo(() => {
     return salaryStats.find(s => s.id === selectedStaffId);
@@ -236,7 +239,9 @@ const Salaries: React.FC<{orders: Order[], staff: User[], bitrixConfig?: BitrixC
                       Object.entries(shifts[selectedStaffId] || {})
                         .filter(([date, isScheduled]) => {
                           const d = new Date(date);
-                          return isScheduled && d.getMonth() === selectedMonth && d.getFullYear() === selectedYear;
+                          const today = new Date();
+                          today.setHours(23, 59, 59, 999);
+                          return isScheduled && d.getMonth() === selectedMonth && d.getFullYear() === selectedYear && d <= today;
                         })
                         .sort(([dateA], [dateB]) => new Date(dateA).getTime() - new Date(dateB).getTime())
                         .map(([date], i) => {

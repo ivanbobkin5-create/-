@@ -52,6 +52,18 @@ const Planning: React.FC<PlanningProps> = ({
 
   const [expandedGroups, setExpandedGroups] = useState<string[]>([]);
 
+  const prevWeek = () => {
+    const d = new Date(currentDate);
+    d.setDate(d.getDate() - 7);
+    setCurrentDate(d);
+  };
+
+  const nextWeek = () => {
+    const d = new Date(currentDate);
+    d.setDate(d.getDate() + 7);
+    setCurrentDate(d);
+  };
+
   const weekDays = useMemo(() => {
     const start = new Date(currentDate);
     const day = start.getDay();
@@ -66,10 +78,15 @@ const Planning: React.FC<PlanningProps> = ({
   const todayStr = formatDateKey(new Date());
 
   const groupedInboxTasks = useMemo(() => {
+    const isOrderDone = (order: Order) => {
+      const shipmentTask = order.tasks.find(t => t.stage === ProductionStage.SHIPMENT);
+      if (shipmentTask && shipmentTask.status === TaskStatus.COMPLETED) return true;
+      return order.tasks.length > 0 && order.tasks.every(t => t.status === TaskStatus.COMPLETED);
+    };
+
     const list: (Task & { order: Order })[] = [];
     orders.forEach(order => {
-      const lastTask = [...order.tasks].sort((a, b) => STAGE_SEQUENCE.indexOf(b.stage) - STAGE_SEQUENCE.indexOf(a.stage))[0];
-      if (lastTask?.status === TaskStatus.COMPLETED) return;
+      if (isOrderDone(order)) return;
       
       order.tasks.forEach(task => {
         if (task.stage === ProductionStage.MATERIAL_ORDER) return;
@@ -87,7 +104,7 @@ const Planning: React.FC<PlanningProps> = ({
 
     if (!groups[item.order.id]) {
       groups[item.order.id] = { 
-        label: `${item.order.clientName}`, 
+        label: `${item.order.orderNumber} ${item.order.clientName}`, 
         icon: dealUrl ? (
           <a href={dealUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800">
             <span className="text-[10px] font-black uppercase">B24</span>
@@ -99,21 +116,35 @@ const Planning: React.FC<PlanningProps> = ({
       groups[item.order.id].tasks.push(item);
     });
     return Object.entries(groups).filter(([_, g]: any) => g.tasks.length > 0);
-  }, [orders, inboxSearch]);
+  }, [orders, inboxSearch, bitrixConfig]);
 
   const scheduledTasks = useMemo(() => {
     const weekMap: Record<string, Record<string, (Task & { order: Order })[]>> = {};
     weekDays.forEach(day => {
       const key = formatDateKey(day); 
       weekMap[key] = {};
-      STAGE_SEQUENCE.forEach(stage => { weekMap[key][stage] = []; });
+      STAGE_SEQUENCE.forEach(stage => { 
+        const stageKey = stage as string;
+        weekMap[key][stageKey] = []; 
+      });
     });
     orders.forEach(order => {
+      const isOrderDone = (order: Order) => {
+        const shipmentTask = order.tasks.find(t => t.stage === ProductionStage.SHIPMENT);
+        if (shipmentTask && shipmentTask.status === TaskStatus.COMPLETED) return true;
+        return order.tasks.length > 0 && order.tasks.every(t => t.status === TaskStatus.COMPLETED);
+      };
+
+      if (isOrderDone(order)) return;
+
       order.tasks.forEach(task => {
-        if (task.plannedDate && weekMap[task.plannedDate]) {
-          const stageKey = task.stage as string;
-          if (!weekMap[task.plannedDate][stageKey]) weekMap[task.plannedDate][stageKey] = [];
-          weekMap[task.plannedDate][stageKey].push({ ...task, order });
+        if (task.plannedDate) {
+          const datePart = task.plannedDate.includes('T') ? task.plannedDate.split('T')[0] : task.plannedDate;
+          if (weekMap[datePart]) {
+            const stageKey = task.stage as string;
+            if (!weekMap[datePart][stageKey]) weekMap[datePart][stageKey] = [];
+            weekMap[datePart][stageKey].push({ ...task, order });
+          }
         }
       });
     });
@@ -130,21 +161,30 @@ const Planning: React.FC<PlanningProps> = ({
                {isBitrixEnabled && <button onClick={async () => { setIsSyncing(true); await onSyncBitrix(); setIsSyncing(false); }} className={`p-2 bg-blue-50 text-blue-600 rounded-xl ${isSyncing ? 'animate-spin' : ''}`}><RefreshCw size={18} /></button>}
             </div>
           </div>
-          {/* Removed grouping toggle */}
+          <div className="relative">
+            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input 
+              type="text" 
+              placeholder="Поиск..." 
+              value={inboxSearch} 
+              onChange={(e) => setInboxSearch(e.target.value)}
+              className="w-full pl-9 pr-3 py-2 bg-slate-50 rounded-xl text-sm border-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
         </div>
-        <div className="flex-1 overflow-y-auto p-4 custom-scrollbar space-y-2">
+        <div className="flex-1 overflow-y-auto p-4 custom-scrollbar space-y-2 text-left">
           {groupedInboxTasks.map(([groupId, group]: any) => (
-            <div key={groupId} className="space-y-1">
-              <button onClick={() => setExpandedGroups(p => p.includes(groupId) ? p.filter(g => g !== groupId) : [...p, groupId])} className="w-full flex items-center justify-between p-2 hover:bg-slate-50 rounded-xl group/header">
-                <div className="flex items-center gap-2"><div className="text-slate-400 group-hover/header:text-blue-500">{group.icon}</div><span className="text-[11px] font-black text-slate-700 uppercase">{group.label}</span></div>
-                <div className="flex items-center gap-2"><span className="text-[10px] font-black text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded-md">{group.tasks.length}</span><ChevronDown size={14} className={`text-slate-300 transition-transform ${expandedGroups.includes(groupId) ? 'rotate-180' : ''}`} /></div>
+            <div key={groupId} className="space-y-1 text-left">
+              <button onClick={() => setExpandedGroups(p => p.includes(groupId) ? p.filter(g => g !== groupId) : [...p, groupId])} className="w-full flex items-center justify-start gap-4 p-2 hover:bg-slate-50 rounded-xl group/header text-left">
+                <div className="flex items-center gap-2 text-left"><div className="text-slate-400 group-hover/header:text-blue-500 text-left">{group.icon}</div><span className="text-[11px] font-black text-slate-700 uppercase text-left">{group.label}</span></div>
+                <div className="flex items-center gap-2 text-left ml-auto"><span className="text-[10px] font-black text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded-md text-left">{group.tasks.length}</span><ChevronDown size={14} className={`text-slate-300 transition-transform ${expandedGroups.includes(groupId) ? 'rotate-180' : ''}`} /></div>
               </button>
               {(expandedGroups.includes(groupId) || inboxSearch) && (
-                <div className="pl-2 space-y-2 animate-in slide-in-from-top-1">
+                <div className="pl-2 space-y-2 animate-in slide-in-from-top-1 text-left">
                   {group.tasks.map((task: any) => (
-                    <div key={task.id} onClick={() => setSelectedTaskId(selectedTaskId?.taskId === task.id ? null : { orderId: task.order.id, taskId: task.id })} className={`p-3 rounded-2xl border cursor-pointer transition-all ${selectedTaskId?.taskId === task.id ? 'bg-blue-600 border-blue-600 text-white shadow-lg' : 'bg-white border-slate-100 hover:border-blue-200'}`}>
-                      <div className="flex justify-between items-start gap-2">
-                        <div className="font-bold text-xs line-clamp-2 leading-tight">{task.title || 'Без названия'}</div>
+                    <div key={task.id} onClick={() => setSelectedTaskId(selectedTaskId?.taskId === task.id ? null : { orderId: task.order.id, taskId: task.id })} className={`p-3 rounded-2xl border cursor-pointer transition-all text-left ${selectedTaskId?.taskId === task.id ? 'bg-blue-600 border-blue-600 text-white shadow-lg' : 'bg-white border-slate-100 hover:border-blue-200'}`}>
+                      <div className="flex justify-start items-start gap-3 text-left">
+                        <div className="font-bold text-xs line-clamp-2 leading-tight text-left flex-1">{task.title || 'Без названия'}</div>
                         {task.externalTaskId && task.externalTaskId !== 'undefined' && bitrixConfig?.webhookUrl ? (
                           <a 
                             href={`${bitrixConfig.webhookUrl.split('/rest/')[0]}/company/personal/user/0/tasks/task/view/${task.externalTaskId}/`} 
@@ -179,9 +219,9 @@ const Planning: React.FC<PlanningProps> = ({
       <div className="flex-1 flex flex-col min-w-0">
         <div className="mb-6 flex justify-between shrink-0">
           <div className="flex bg-white rounded-xl border border-slate-200 p-1 shadow-sm">
-            <button onClick={() => { const d = new Date(currentDate); d.setDate(d.getDate() - 7); setCurrentDate(d); }} className="p-2 hover:bg-slate-50 rounded-lg"><ChevronLeft size={20} /></button>
+            <button onClick={prevWeek} className="p-2 hover:bg-slate-50 rounded-lg"><ChevronLeft size={20} /></button>
             <div className="px-4 py-2 text-sm font-bold flex items-center gap-2"><CalendarIcon size={16} className="text-blue-500" />{weekDays[0].toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })} — {weekDays[6].toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', year: 'numeric' })}</div>
-            <button onClick={() => { const d = new Date(currentDate); d.setDate(d.getDate() + 7); setCurrentDate(d); }} className="p-2 hover:bg-white rounded-lg"><ChevronRight size={20} /></button>
+            <button onClick={nextWeek} className="p-2 hover:bg-white rounded-lg"><ChevronRight size={20} /></button>
           </div>
         </div>
 
@@ -204,7 +244,7 @@ const Planning: React.FC<PlanningProps> = ({
                   <div className={`p-2 rounded-xl text-white shadow-sm ${STAGE_CONFIG[stage].color}`}>{STAGE_CONFIG[stage].icon}</div>
                   <div className="text-[11px] font-black text-slate-700 text-center uppercase leading-tight">{STAGE_CONFIG[stage].label}</div>
                 </div>
-                <div className="flex-1 grid grid-cols-7 divide-x divide-slate-100">
+                <div className="flex-1 grid grid-cols-7 divide-x divide-slate-100 items-stretch">
                   {weekDays.map(day => {
                     const dk = formatDateKey(day); 
                     const tasks = scheduledTasks[dk]?.[stage as string] || [];
@@ -213,7 +253,32 @@ const Planning: React.FC<PlanningProps> = ({
                     return (
                       <div 
                         key={dk} 
-                        onClick={() => { if (canAssign && selectedTaskId) onUpdateTaskPlanning(selectedTaskId.orderId, selectedTaskId.taskId, dk, undefined, []); }} 
+                        onClick={() => { 
+                          if (canAssign && selectedTaskId) {
+                            const order = orders.find(o => o.id === selectedTaskId.orderId);
+                            const task = order?.tasks.find(t => t.id === selectedTaskId.taskId);
+                            let newDate = dk;
+                            if (task?.plannedDate?.includes('T')) {
+                              newDate = `${dk}T${task.plannedDate.split('T')[1]}`;
+                            }
+                            onUpdateTaskPlanning(selectedTaskId.orderId, selectedTaskId.taskId, newDate, task?.assignedTo, task?.accompliceIds);
+                          }
+                        }} 
+                        onDragOver={(e) => e.preventDefault()}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          const taskId = e.dataTransfer.getData('taskId');
+                          const orderId = e.dataTransfer.getData('orderId');
+                          const order = orders.find(o => o.id === orderId);
+                          const task = order?.tasks.find(t => t.id === taskId);
+                          
+                          let newDate = dk;
+                          if (task?.plannedDate?.includes('T')) {
+                            newDate = `${dk}T${task.plannedDate.split('T')[1]}`;
+                          }
+                          
+                          onUpdateTaskPlanning(orderId, taskId, newDate, task?.assignedTo, task?.accompliceIds);
+                        }}
                         className={`relative h-full flex flex-col gap-2 p-2 min-h-full ${canAssign ? 'cursor-pointer bg-emerald-50/40 ring-4 ring-inset ring-emerald-500/20 z-10' : ''}`}
                       >
                         {tasks.map(task => {
@@ -222,10 +287,29 @@ const Planning: React.FC<PlanningProps> = ({
                           const isOverdue = !isC && task.plannedDate && task.plannedDate < todayStr;
                           
                           return (
-                            <div key={task.id} className={`p-2.5 rounded-2xl border-2 flex flex-col h-fit min-h-[140px] shadow-sm transition-all hover:shadow-md group/card ${isC ? 'bg-emerald-50 border-emerald-300' : 'bg-white'} ${isOverdue ? 'ring-2 ring-rose-500 ring-offset-2' : ''}`} style={{ borderColor: isC ? undefined : orderColor.replace('bg-', '#') }}>
+                            <div 
+                              key={task.id} 
+                              draggable
+                              onDragStart={(e) => {
+                                e.dataTransfer.setData('taskId', task.id);
+                                e.dataTransfer.setData('orderId', task.order.id);
+                              }}
+                              className={`p-2.5 rounded-2xl border-2 flex flex-col h-fit min-h-[140px] shadow-sm transition-all hover:shadow-md group/card ${isC ? 'bg-emerald-50 border-emerald-300' : 'bg-white'} ${isOverdue ? 'ring-2 ring-rose-500 ring-offset-2' : ''}`} style={{ borderColor: isC ? undefined : orderColor.replace('bg-', '#') }}>
                               <div className="flex justify-between items-start mb-2">
-                                <div className="flex flex-col">
+                                <div className="flex flex-col gap-1.5">
                                   <span className={`text-[10px] font-bold leading-tight line-clamp-2 ${isC ? 'text-emerald-700' : 'text-slate-800'}`}>{task.order.clientName}</span>
+                                  <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-md px-1.5 py-0.5 w-fit hover:border-blue-300 transition-colors">
+                                    <Clock size={10} className="text-slate-400" />
+                                    <input 
+                                      type="time" 
+                                      className="text-[10px] bg-transparent border-none p-0 focus:ring-0 text-slate-600 font-medium w-[34px]"
+                                      value={task.plannedDate?.includes('T') ? task.plannedDate.split('T')[1].substring(0, 5) : '18:00'}
+                                      onChange={(e) => {
+                                        const newDate = task.plannedDate?.includes('T') ? task.plannedDate.split('T')[0] : dk;
+                                        onUpdateTaskPlanning(task.order.id, task.id, `${newDate}T${e.target.value}:00`, task.assignedTo, task.accompliceIds);
+                                      }}
+                                    />
+                                  </div>
                                   {isOverdue && <span className="flex items-center gap-1 text-[8px] font-black text-rose-600 uppercase mt-1"><Clock size={8}/> ПРОСРОЧЕНО</span>}
                                 </div>
                                 <div className="flex flex-col items-end gap-1 shrink-0">

@@ -120,33 +120,33 @@ const PlanningNew: React.FC<PlanningNewProps> = ({
             </button>
           )}
         </div>
-        <div className="flex-1 overflow-y-auto p-4 space-y-6 custom-scrollbar">
+        <div className="flex-1 overflow-y-auto p-4 space-y-6 custom-scrollbar text-left">
           {groupedInboxTasks.length === 0 ? (
             <div className="text-center py-10 text-slate-400">
               <AlertCircle size={32} className="mx-auto mb-2 opacity-20" />
               <p className="text-xs">Нет новых задач</p>
             </div>
           ) : groupedInboxTasks.map(([groupKey, group]) => (
-            <div key={groupKey} className="space-y-2">
-              <div className="flex items-center gap-2 text-slate-500 px-1">
+            <div key={groupKey} className="space-y-2 text-left">
+              <div className="flex items-center gap-2 text-slate-500 px-1 text-left">
                 {group.icon}
-                <span className="text-[10px] font-black uppercase tracking-wider">{group.label}</span>
+                <span className="text-[10px] font-black uppercase tracking-wider text-left">{group.label}</span>
                 <span className="ml-auto bg-slate-100 text-slate-500 text-[9px] px-1.5 py-0.5 rounded-full">{group.tasks.length}</span>
               </div>
-              <div className="space-y-2">
+              <div className="space-y-2 text-left">
                 {group.tasks.map(task => (
                   <div 
                     key={task.id} 
-                    className="p-3 bg-white border border-slate-200 rounded-2xl shadow-sm hover:border-blue-300 hover:shadow-md transition-all cursor-pointer group relative"
+                    className="p-3 bg-white border border-slate-200 rounded-2xl shadow-sm hover:border-blue-300 hover:shadow-md transition-all cursor-pointer group relative text-left"
                     onClick={() => {
                       // Быстрое планирование на сегодня
                       onUpdateTaskPlanning(task.order.id, task.id, todayStr, undefined);
                     }}
                   >
-                    <div className="font-bold text-xs text-slate-800 group-hover:text-blue-600 transition-colors">{task.order.clientName}</div>
-                    <div className="text-[10px] text-slate-400 flex items-center gap-1 mt-1">
-                      <span className="bg-slate-100 px-1.5 py-0.5 rounded uppercase font-bold text-[8px]">{task.order.orderNumber}</span>
-                      {task.externalTaskId && <span className="text-blue-400 font-bold">B24</span>}
+                    <div className="font-bold text-xs text-slate-800 group-hover:text-blue-600 transition-colors text-left">{task.order.clientName}</div>
+                    <div className="text-[10px] text-slate-400 flex items-center gap-1 mt-1 text-left">
+                      <span className="bg-slate-100 px-1.5 py-0.5 rounded uppercase font-bold text-[8px] text-left">{task.order.orderNumber}</span>
+                      {task.externalTaskId && <span className="text-blue-400 font-bold text-left">B24</span>}
                     </div>
                     <div className="absolute right-3 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity">
                       <Plus size={16} className="text-blue-500" />

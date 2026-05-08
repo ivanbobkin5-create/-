@@ -4,6 +4,8 @@ import { UserRole } from '../types';
 import { Layout, Shield, Factory, Lock, User as UserIcon, ArrowLeft, Loader2, Database, AlertCircle, CheckCircle, Info } from 'lucide-react';
 import { dbService } from '../dbService';
 
+declare const window: any;
+
 interface LoginPageProps {
   onLogin: (role: UserRole, email?: string, password?: string) => Promise<string | void>;
   onRegister: (companyName: string, email: string, pass: string) => Promise<string | void>;
@@ -19,6 +21,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onRegister }) => {
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
+  const [b24Detected, setB24Detected] = useState(false);
   
   // Диагностика
   const [systemHealth, setSystemHealth] = useState<{success: boolean, message: string, details?: string} | null>(null);
@@ -30,8 +33,50 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onRegister }) => {
     };
     checkStatus();
     const interval = setInterval(checkStatus, 15000);
+
+    // Check BX24 logic
+    if (typeof window !== 'undefined' && window.BX24) {
+      window.BX24.init(() => {
+        setB24Detected(true);
+      });
+    }
+
     return () => clearInterval(interval);
   }, []);
+
+  const handleB24Login = () => {
+    setIsLoading(true);
+    setError('');
+    window.BX24.callMethod('user.current', {}, async (res: any) => {
+      if (res.error()) {
+        setError('Не удалось получить данные из Битрикс24: ' + res.error());
+        setIsLoading(false);
+        return;
+      }
+      const userData = res.data();
+      const b24Email = userData.EMAIL;
+      
+      if (!b24Email) {
+        setError('В вашем профиле Битрикс24 отсутствует Email. Добавьте его для входа.');
+        setIsLoading(false);
+        return;
+      }
+
+      try {
+        // Мы пытаемся войти через бэкенд, но у нас нет пароля.
+        // Бэкенд сейчас ждет password. 
+        // Если мы переделаем бэкенд для приема b24 auth или просто попытаемся залогинить (нужен пароль).
+        // Так как на бэкенде пароль обязателен, здесь мы можем использовать какой-то "дефолтный" пароль или сделать отдельный эндпоинт для лолгина по Битрикс.
+        // Пока вызовем onLogin со специальным паролем или добавим логику в onLogin.
+        const result = await onLogin(UserRole.EMPLOYEE, b24Email, 'B24_AUTH');
+        if (typeof result === 'string') setError(result);
+      } catch (e) {
+        setError("Ошибка соединения с сервером");
+      } finally {
+        setIsLoading(false);
+      }
+    });
+  };
 
   const handleAdminAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -159,6 +204,24 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onRegister }) => {
             </div>
           ) : (
             <>
+              {b24Detected && (
+                <div className="mb-6 mb-8 mt-4 animate-in fade-in slide-in-from-bottom-2">
+                  <button
+                    onClick={handleB24Login}
+                    disabled={isLoading}
+                    className="w-full bg-[#2fc6f6] text-white py-3 rounded-xl font-bold hover:bg-[#20b2e0] transition-all flex items-center justify-center gap-2"
+                  >
+                    {isLoading ? <Loader2 size={16} className="animate-spin" /> : <Database size={16} />}
+                    Войти через Битрикс24
+                  </button>
+                  <div className="relative flex py-5 items-center mt-2">
+                    <div className="flex-grow border-t border-slate-200"></div>
+                    <span className="flex-shrink-0 mx-4 text-slate-400 text-xs font-medium uppercase tracking-widest">Или</span>
+                    <div className="flex-grow border-t border-slate-200"></div>
+                  </div>
+                </div>
+              )}
+
               <div className="flex gap-2 p-1 bg-slate-100 rounded-xl mb-8">
                 <button 
                   onClick={() => setView('login')}
@@ -244,7 +307,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onRegister }) => {
         </div>
 
         <div className="mt-8 text-center">
-          <p className="text-slate-500 text-[10px] leading-relaxed">© 2026 МебельПлан ERP ООО "Мебель Фактура".<br/>Все права защищены.</p>
+          <p className="text-slate-500 text-[10px] leading-relaxed">© 2026 МебельПлан ERP ООО &quot;Мебель Фактура&quot;.<br/>Все права защищены.</p>
         </div>
       </div>
     </div>

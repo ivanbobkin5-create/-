@@ -1,11 +1,13 @@
 import React, { useState, useMemo } from 'react';
-import { Order, ProductionStage, TaskStatus, SupplyCategory, SupplyStatus, SupplyData, SupplyItem, BitrixConfig } from '../types';
+import { Order, ProductionStage, TaskStatus, SupplyCategory, SupplyStatus, SupplyData, SupplyItem, BitrixConfig, Task } from '../types';
 import { STAGE_SEQUENCE } from '../constants';
 import { Search, X, Check, AlertCircle, Plus, Trash2 } from 'lucide-react';
 
-interface SupplyProps {
+export interface SupplyProps {
   orders: Order[];
   onUpdateSupplyData: (orderId: string, taskId: string, category: SupplyCategory, data: SupplyItem) => void;
+  onUpdateTask: (orderId: string, taskId: string, status: TaskStatus, comment?: string) => void;
+  onAddSupplyComment: (order: Order, task: Task, comment: string) => void;
   bitrixConfig?: BitrixConfig;
 }
 
@@ -19,8 +21,8 @@ const SUPPLY_COLUMNS = [
 
 const STATUS_COLORS = {
   [SupplyStatus.NOT_ORDERED]: 'bg-slate-100 text-slate-500',
-  [SupplyStatus.ORDERED]: 'bg-blue-100 text-blue-600',
-  [SupplyStatus.RECEIVED]: 'bg-emerald-100 text-emerald-600'
+  [SupplyStatus.ORDERED]: 'bg-amber-500 text-white shadow-sm',
+  [SupplyStatus.RECEIVED]: 'bg-emerald-500 text-white shadow-sm'
 };
 
 const STATUS_LABELS = {
@@ -29,12 +31,20 @@ const STATUS_LABELS = {
   [SupplyStatus.RECEIVED]: 'Получено'
 };
 
-const Supply: React.FC<SupplyProps> = ({ orders, onUpdateSupplyData, bitrixConfig }) => {
+const Supply: React.FC<SupplyProps> = ({ orders, onUpdateSupplyData, onUpdateTask, onAddSupplyComment, bitrixConfig }) => {
   const [search, setSearch] = useState('');
-  const [editingCell, setEditingCell] = useState<{ orderId: string, taskId: string, category: SupplyCategory, data: SupplyItem } | null>(null);
+  const [statusFilter, setStatusFilter] = useState<SupplyStatus | 'ALL'>('ALL');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+  const [editingCell, setEditingCell] = useState<{ order: Order, task: Task, category: SupplyCategory, data: SupplyItem } | null>(null);
 
   const supplyOrders = useMemo(() => {
-    return orders.filter(order => {
+    const filtered = orders.filter(order => {
+      const materialTask = order.tasks.find(t => t.stage === ProductionStage.MATERIAL_ORDER);
+      if (!materialTask) return false;
+      
+      // If the material order task itself is completed, hide it from supply
+      if (materialTask.status === TaskStatus.COMPLETED) return false;
+
       // Find the last production task (excluding MATERIAL_ORDER)
       const productionTasks = order.tasks.filter(t => t.stage !== ProductionStage.MATERIAL_ORDER);
       const lastProdTask = productionTasks.sort((a, b) => STAGE_SEQUENCE.indexOf(b.stage) - STAGE_SEQUENCE.indexOf(a.stage))[0];
@@ -42,19 +52,32 @@ const Supply: React.FC<SupplyProps> = ({ orders, onUpdateSupplyData, bitrixConfi
       // If the last production task is completed, the order is fully done
       if (lastProdTask?.status === TaskStatus.COMPLETED) return false;
 
-      const hasMaterialTask = order.tasks.some(t => t.stage === ProductionStage.MATERIAL_ORDER);
-      if (!hasMaterialTask) return false;
-      
+      let matches = true;
       if (search) {
         const s = search.toLowerCase();
-        return order.orderNumber.toLowerCase().includes(s) || order.clientName.toLowerCase().includes(s);
+        matches = matches && (order.orderNumber.toLowerCase().includes(s) || order.clientName.toLowerCase().includes(s));
       }
-      return true;
+      if (statusFilter !== 'ALL') {
+        const hasStatus = Object.values(materialTask.supplyData || {}).some((item: any) => item.status === statusFilter);
+        matches = matches && hasStatus;
+      }
+      return matches;
     }).map(order => {
       const materialTask = order.tasks.find(t => t.stage === ProductionStage.MATERIAL_ORDER)!;
       return { order, task: materialTask };
     });
-  }, [orders, search]);
+
+    // Apply sorting by plannedDate (readiness date), fallback to deadline
+    return filtered.sort((a, b) => {
+      const dateA = a.task.plannedDate || a.order.deadline || '';
+      const dateB = b.task.plannedDate || b.order.deadline || '';
+      if (sortDirection === 'asc') {
+        return dateA.localeCompare(dateB);
+      } else {
+        return dateB.localeCompare(dateA);
+      }
+    });
+  }, [orders, search, statusFilter, sortDirection]);
 
   const handleSave = () => {
     if (editingCell) {
@@ -62,44 +85,73 @@ const Supply: React.FC<SupplyProps> = ({ orders, onUpdateSupplyData, bitrixConfi
       if (dataToSave.invoices) {
         dataToSave.amount = dataToSave.invoices.reduce((sum, inv) => sum + (inv.amount || 0), 0);
       }
-      onUpdateSupplyData(editingCell.orderId, editingCell.taskId, editingCell.category, dataToSave);
+      
+      // Generate comment
+      const categoryName = SUPPLY_COLUMNS.find(c => c.id === editingCell.category)?.label || editingCell.category;
+      const comment = `Обновление снабжения: ${categoryName}\n` + 
+        (dataToSave.invoices || []).map(inv => 
+          `- ${inv.supplier || 'Без поставщика'}: ${inv.amount || 0} ₽ ${inv.paid ? '(Оплачено)' : '(Не оплачено)'} ${inv.info ? `(${inv.info})` : ''}`
+        ).join('\n');
+      
+      onAddSupplyComment(editingCell.order, editingCell.task, comment);
+      onUpdateSupplyData(editingCell.order.id, editingCell.task.id, editingCell.category, dataToSave);
       setEditingCell(null);
     }
   };
 
   return (
-    <div className="space-y-6 h-full flex flex-col">
-      <div className="flex justify-between items-center shrink-0">
-        <div className="relative w-80">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-          <input 
-            type="text" 
-            placeholder="Поиск по сделкам..." 
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 bg-white border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500/10" 
-          />
+    <div className="h-full flex flex-col overflow-hidden">
+      <div className="flex justify-between items-start shrink-0 pb-6">
+        <div className="flex gap-4">
+          <div className="relative w-80">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+            <input 
+              type="text" 
+              placeholder="Поиск по сделкам..." 
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="w-full pl-10 pr-4 py-2 bg-white border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500/10" 
+            />
+          </div>
+          <select 
+            value={statusFilter} 
+            onChange={e => setStatusFilter(e.target.value as SupplyStatus | 'ALL')}
+            className="bg-white border border-slate-200 rounded-xl text-sm px-4 py-2 outline-none focus:ring-2 focus:ring-blue-500/10"
+          >
+            <option value="ALL">Все статусы</option>
+            {Object.entries(STATUS_LABELS).map(([val, label]) => (
+              <option key={val} value={val}>{label}</option>
+            ))}
+          </select>
+          <select 
+            value={sortDirection} 
+            onChange={e => setSortDirection(e.target.value as 'asc' | 'desc')}
+            className="bg-white border border-slate-200 rounded-xl text-sm px-4 py-2 outline-none focus:ring-2 focus:ring-blue-500/10"
+          >
+            <option value="asc">Дата готовности: Сначала старые</option>
+            <option value="desc">Дата готовности: Сначала новые</option>
+          </select>
         </div>
       </div>
 
       <div className="flex-1 bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden flex flex-col">
-        <div className="overflow-x-auto custom-scrollbar flex-1">
-          <table className="w-full text-left border-collapse min-w-[1000px]">
+        <div className="overflow-auto custom-scrollbar flex-1">
+          <table className="w-full text-left border-separate border-spacing-0 min-w-[1000px]">
             <thead>
-              <tr className="bg-slate-50 border-b border-slate-200">
-                <th className="p-4 font-bold text-slate-700 text-sm w-64 sticky left-0 bg-slate-50 z-10 shadow-[1px_0_0_0_#e2e8f0]">Сделка (Задача)</th>
+              <tr className="z-30">
+                <th className="p-4 font-bold text-slate-700 text-sm w-64 sticky top-0 left-0 bg-slate-50 z-40 border-b border-r border-slate-200 shadow-[0_1px_0_0_rgba(0,0,0,0.05)]">Сделка (Задача)</th>
+                <th className="p-4 font-bold text-slate-700 text-sm w-16 sticky top-0 bg-slate-50 z-30 border-b border-slate-200 shadow-[0_1px_0_0_rgba(0,0,0,0.05)]"></th>
                 {SUPPLY_COLUMNS.map(col => (
-                  <th key={col.id} className="p-4 font-bold text-slate-700 text-sm min-w-[160px]">{col.label}</th>
+                  <th key={col.id} className="p-4 font-bold text-slate-700 text-sm min-w-[160px] sticky top-0 bg-slate-50 z-30 border-b border-slate-200 shadow-[0_1px_0_0_rgba(0,0,0,0.05)]">{col.label}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {supplyOrders.map(({ order, task }) => (
-                <tr key={order.id} className="border-b border-slate-100 hover:bg-slate-50/50 transition-colors">
-                  <td className="p-4 sticky left-0 bg-white group-hover:bg-slate-50/50 z-10 shadow-[1px_0_0_0_#f1f5f9]">
+                <tr key={order.id} className="hover:bg-slate-50/50 transition-colors group">
+                  <td className="p-4 sticky left-0 bg-white group-hover:bg-slate-50/50 z-10 border-b border-r border-slate-100">
                     <div className="flex flex-col gap-1">
                       <div className="flex items-center gap-2">
-                        <span className="text-[10px] font-black bg-blue-600 text-white px-2 py-0.5 rounded uppercase">{order.orderNumber}</span>
                         {order.externalId && bitrixConfig?.webhookUrl && (
                           <a 
                             href={`${bitrixConfig.webhookUrl.split('/rest/')[0]}/crm/deal/details/${order.externalId}/`}
@@ -107,14 +159,41 @@ const Supply: React.FC<SupplyProps> = ({ orders, onUpdateSupplyData, bitrixConfi
                             rel="noopener noreferrer"
                             className="flex items-center gap-1 px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded-md hover:bg-blue-100 transition-all"
                             onClick={e => e.stopPropagation()}
+                            title="Открыть сделку в Битрикс24"
                           >
-                            <span className="text-[8px] font-black uppercase">B24</span>
+                            <span className="text-[8px] font-black uppercase">Сделка</span>
+                          </a>
+                        )}
+                        {task.externalTaskId && bitrixConfig?.webhookUrl && (
+                          <a 
+                            href={`${bitrixConfig.webhookUrl.split('/rest/')[0]}/company/personal/user/0/tasks/task/view/${task.externalTaskId}/`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center gap-1 px-1.5 py-0.5 bg-indigo-50 text-indigo-600 rounded-md hover:bg-indigo-100 transition-all"
+                            onClick={e => e.stopPropagation()}
+                            title="Открыть задачу в Битрикс24"
+                          >
+                            <span className="text-[8px] font-black uppercase">Задача</span>
                           </a>
                         )}
                       </div>
                       <div className="font-bold text-slate-800 text-sm">{order.clientName}</div>
                       <div className="text-xs text-slate-500 line-clamp-1">{task.title || 'Заказ материалов'}</div>
+                      <div className="text-xs font-medium text-slate-600 mt-1">Готовность: {task.plannedDate || order.deadline}</div>
                     </div>
+                  </td>
+                  <td className="p-4 border-b border-slate-100">
+                    <button 
+                      onClick={() => {
+                        if (window.confirm('Завершить этап снабжения для этого заказа?')) {
+                          onUpdateTask(order.id, task.id, TaskStatus.COMPLETED, 'Снабжение завершено');
+                        }
+                      }}
+                      className="p-2 bg-emerald-50 text-emerald-600 rounded-xl hover:bg-emerald-600 hover:text-white transition-all group"
+                      title="Завершить снабжение"
+                    >
+                      <Check size={20} />
+                    </button>
                   </td>
                   {SUPPLY_COLUMNS.map(col => {
                     const cellData = task.supplyData?.[col.id as SupplyCategory] || {
@@ -159,12 +238,13 @@ const Supply: React.FC<SupplyProps> = ({ orders, onUpdateSupplyData, bitrixConfi
 
                     const budget = getCategoryBudget(order, col.id as SupplyCategory);
                     const isOverBudget = budget > 0 && totalSpent > budget;
+                    const isPaid = invoices.length > 0 && invoices.every(inv => inv.paid);
                     
                     return (
-                      <td key={col.id} className="p-2">
+                      <td key={col.id} className="p-2 border-b border-slate-100">
                         <div 
-                          onClick={() => setEditingCell({ orderId: order.id, taskId: task.id, category: col.id as SupplyCategory, data: { ...cellData, invoices } })}
-                          className={`p-3 rounded-xl border hover:shadow-sm cursor-pointer transition-all bg-white h-full min-h-[80px] flex flex-col gap-2 ${isOverBudget ? 'border-red-300 bg-red-50/30 hover:border-red-400' : 'border-slate-100 hover:border-blue-300'}`}
+                          onClick={() => setEditingCell({ order, task, category: col.id as SupplyCategory, data: { ...cellData, invoices } })}
+                          className={`p-3 rounded-xl border hover:shadow-sm cursor-pointer transition-all bg-white h-full min-h-[80px] flex flex-col gap-2 ${isOverBudget ? 'border-red-300 bg-red-50/30 hover:border-red-400' : isPaid ? 'border-emerald-500 bg-emerald-50/20 hover:border-emerald-600' : 'border-slate-100 hover:border-blue-300'}`}
                         >
                           <div className="flex justify-between items-start">
                             <span className={`text-[9px] font-black px-2 py-0.5 rounded uppercase ${STATUS_COLORS[cellData.status || SupplyStatus.NOT_ORDERED]}`}>
@@ -172,10 +252,10 @@ const Supply: React.FC<SupplyProps> = ({ orders, onUpdateSupplyData, bitrixConfi
                             </span>
                             <div className="flex flex-col items-end">
                               {totalSpent > 0 && (
-                                <span className={`text-[10px] font-bold ${isOverBudget ? 'text-red-600' : 'text-slate-600'}`}>{totalSpent.toLocaleString('ru-RU')} ₽</span>
+                                <span className={`text-xs font-bold ${isOverBudget ? 'text-red-600' : 'text-slate-700'}`}>{totalSpent.toLocaleString('ru-RU')} ₽</span>
                               )}
                               {budget > 0 && (
-                                <span className="text-[8px] font-bold text-slate-400 uppercase">Бюджет: {budget.toLocaleString('ru-RU')} ₽</span>
+                                <span className="text-[10px] font-bold text-slate-400 uppercase">Бюджет: {budget.toLocaleString('ru-RU')} ₽</span>
                               )}
                             </div>
                           </div>
@@ -183,19 +263,22 @@ const Supply: React.FC<SupplyProps> = ({ orders, onUpdateSupplyData, bitrixConfi
                           {invoices.length > 0 ? (
                             <div className="space-y-1 mt-1">
                               {invoices.map((inv, idx) => (
-                                <div key={inv.id || idx} className="text-[10px] bg-slate-50 p-1.5 rounded-lg border border-slate-100">
-                                  <div className="flex justify-between font-bold text-slate-600">
+                                <div key={inv.id || idx} className="text-xs bg-slate-50 p-1.5 rounded-lg border border-slate-100">
+                                  <div className="flex justify-between font-bold text-slate-700">
                                     <span className="uppercase tracking-wider truncate mr-2">{inv.supplier || 'Без поставщика'}</span>
-                                    <span>{inv.amount?.toLocaleString('ru-RU')} ₽</span>
+                                    <div className="flex items-center gap-1">
+                                      {inv.paid && <Check size={12} className="text-emerald-600" />}
+                                      <span>{inv.amount?.toLocaleString('ru-RU')} ₽</span>
+                                    </div>
                                   </div>
-                                  {inv.info && <div className="text-slate-500 line-clamp-1 mt-0.5">{inv.info}</div>}
+                                  {inv.info && <div className="text-slate-500 line-clamp-1 mt-0.5 text-[10px]">{inv.info}</div>}
                                 </div>
                               ))}
                             </div>
                           ) : (
                             <>
                               {cellData.supplier && (
-                                <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">{cellData.supplier}</div>
+                                <div className="text-xs font-bold text-slate-500 uppercase tracking-wider">{cellData.supplier}</div>
                               )}
                               {cellData.info && (
                                 <div className="text-xs text-slate-700 line-clamp-2">{cellData.info}</div>
@@ -332,6 +415,20 @@ const Supply: React.FC<SupplyProps> = ({ orders, onUpdateSupplyData, bitrixConfi
                         placeholder="Дополнительная информация..."
                       />
                     </div>
+                    
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={inv.paid || false}
+                        onChange={(e) => {
+                          const newInvoices = [...editingCell.data.invoices!];
+                          newInvoices[idx].paid = e.target.checked;
+                          setEditingCell({ ...editingCell, data: { ...editingCell.data, invoices: newInvoices } });
+                        }}
+                        className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                      />
+                      <span className="text-xs font-bold text-slate-700">Счет оплачен</span>
+                    </label>
                   </div>
                 ))}
                 <datalist id="suppliers-list">

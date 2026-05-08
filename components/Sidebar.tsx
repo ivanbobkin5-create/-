@@ -25,13 +25,6 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, onPageChange, onLogout, 
   return (
     <aside className="w-64 bg-slate-900 text-white flex flex-col h-full shadow-2xl z-20">
       <div className="p-6 flex items-center gap-3 border-b border-slate-800/50">
-        <div className="p-2 bg-blue-600 rounded-lg shrink-0">
-          {bitrixConfig?.portalLogo ? (
-            <img src={bitrixConfig.portalLogo} alt="Logo" className="w-6 h-6 object-contain rounded" />
-          ) : (
-            <Layout size={24} className="text-white" />
-          )}
-        </div>
         <div className="flex flex-col">
           <span className="text-xl font-extrabold tracking-tight">Мебель<span className="text-blue-500">План</span></span>
         </div>

@@ -18,16 +18,33 @@ interface ReportsProps {
 }
 
 const Reports: React.FC<ReportsProps> = ({ orders, staff, workSessions = [] }) => {
-  const [activeTab, setActiveTab] = useState<'analytics' | 'time'>('analytics');
+  const [activeTab, setActiveTab] = useState<'analytics' | 'time' | 'tasks'>('analytics');
   const [timeRange, setTimeRange] = useState<'week' | 'month'>('month');
+  const [selectedEmployee, setSelectedEmployee] = useState<string>('all');
+  const [dateFrom, setDateFrom] = useState<string>('');
+  const [dateTo, setDateTo] = useState<string>('');
 
   const completedTasks = useMemo(() => {
-    return orders.flatMap(order => 
+    let tasks = orders.flatMap(order => 
       order.tasks
         .filter(t => t.status === TaskStatus.COMPLETED && t.completedAt)
         .map(t => ({ ...t, order }))
-    ).sort((a, b) => new Date(b.completedAt!).getTime() - new Date(a.completedAt!).getTime());
-  }, [orders]);
+    );
+
+    if (dateFrom) {
+      tasks = tasks.filter(t => t.completedAt!.split('T')[0] >= dateFrom);
+    }
+    if (dateTo) {
+      tasks = tasks.filter(t => t.completedAt!.split('T')[0] <= dateTo);
+    }
+
+    return tasks.sort((a, b) => new Date(b.completedAt!).getTime() - new Date(a.completedAt!).getTime());
+  }, [orders, dateFrom, dateTo]);
+
+  const filteredTasks = useMemo(() => {
+    if (selectedEmployee === 'all') return completedTasks;
+    return completedTasks.filter(t => t.assignedTo === selectedEmployee);
+  }, [completedTasks, selectedEmployee]);
 
   const employeeStats = useMemo(() => {
     const stats: Record<string, { 
@@ -92,6 +109,7 @@ const Reports: React.FC<ReportsProps> = ({ orders, staff, workSessions = [] }) =
           <h2 className="text-2xl font-black text-slate-800 uppercase tracking-tight">Отчетность</h2>
           <div className="flex bg-white p-1 rounded-xl border border-slate-200 shadow-sm mt-2 w-fit">
             <button onClick={() => setActiveTab('analytics')} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === 'analytics' ? 'bg-blue-600 text-white' : 'text-slate-500 hover:bg-slate-50'}`}>Аналитика производства</button>
+            <button onClick={() => setActiveTab('tasks')} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === 'tasks' ? 'bg-blue-600 text-white' : 'text-slate-500 hover:bg-slate-50'}`}>Выполненные задачи</button>
             <button onClick={() => setActiveTab('time')} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === 'time' ? 'bg-blue-600 text-white' : 'text-slate-500 hover:bg-slate-50'}`}>Учет рабочего времени</button>
           </div>
         </div>
@@ -103,9 +121,68 @@ const Reports: React.FC<ReportsProps> = ({ orders, staff, workSessions = [] }) =
             </div>
           </div>
         )}
+        {activeTab === 'tasks' && (
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-3 py-1.5 shadow-sm">
+              <Calendar size={14} className="text-slate-400" />
+              <input 
+                type="date" 
+                value={dateFrom} 
+                onChange={(e) => setDateFrom(e.target.value)}
+                className="text-[10px] font-bold text-slate-700 focus:outline-none"
+              />
+              <span className="text-slate-300">—</span>
+              <input 
+                type="date" 
+                value={dateTo} 
+                onChange={(e) => setDateTo(e.target.value)}
+                className="text-[10px] font-bold text-slate-700 focus:outline-none"
+              />
+            </div>
+            <select 
+              value={selectedEmployee}
+              onChange={(e) => setSelectedEmployee(e.target.value)}
+              className="bg-white border border-slate-200 rounded-xl px-4 py-2 text-xs font-bold text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="all">Все сотрудники</option>
+              {staff.filter(s => s.isProduction).map(s => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
+            <button 
+              onClick={() => {
+                const csv = [
+                  ['Сотрудник', 'Заказ', 'Клиент', 'Участок', 'Дата', 'Время', 'Длительность'].join(','),
+                  ...filteredTasks.map(t => {
+                    const worker = staff.find(s => s.id === t.assignedTo);
+                    const date = new Date(t.completedAt!);
+                    const duration = t.completedAt && t.startedAt ? new Date(t.completedAt).getTime() - new Date(t.startedAt).getTime() : 0;
+                    return [
+                      worker?.name || '—',
+                      `#${t.order.orderNumber}`,
+                      t.order.clientName,
+                      STAGE_CONFIG[t.stage].label,
+                      date.toLocaleDateString('ru-RU'),
+                      date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
+                      formatDuration(duration)
+                    ].join(',');
+                  })
+                ].join('\n');
+                const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csv], { type: 'text/csv;charset=utf-8;' });
+                const link = document.createElement('a');
+                link.href = URL.createObjectURL(blob);
+                link.download = `report_tasks_${new Date().toISOString().split('T')[0]}.csv`;
+                link.click();
+              }}
+              className="flex items-center gap-2 px-4 py-2 bg-slate-800 text-white rounded-xl text-xs font-bold hover:bg-black transition-all shadow-md"
+            >
+              <Download size={14} /> Экспорт
+            </button>
+          </div>
+        )}
       </div>
 
-      {activeTab === 'analytics' ? (
+      {activeTab === 'analytics' && (
         <div className="space-y-8 animate-in fade-in">
            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               {[
@@ -147,7 +224,72 @@ const Reports: React.FC<ReportsProps> = ({ orders, staff, workSessions = [] }) =
               </div>
            </div>
         </div>
-      ) : (
+      )}
+
+      {activeTab === 'tasks' && (
+        <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden animate-in fade-in">
+           <div className="p-8 border-b border-slate-100 bg-slate-50/30 flex items-center justify-between">
+              <h3 className="text-sm font-black text-slate-700 uppercase tracking-widest flex items-center gap-2"><CheckCircle2 size={16} className="text-emerald-500" /> Детализация выполненных задач</h3>
+              <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Всего: {filteredTasks.length}</div>
+           </div>
+           <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                 <thead>
+                    <tr className="text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">
+                       <th className="px-8 py-5">Сотрудник</th>
+                       <th className="px-8 py-5">Заказ / Задача</th>
+                       <th className="px-8 py-5">Участок</th>
+                       <th className="px-8 py-5">Дата завершения</th>
+                       <th className="px-8 py-5 text-right">Время выполнения</th>
+                    </tr>
+                 </thead>
+                 <tbody className="divide-y divide-slate-100">
+                    {filteredTasks.map(task => {
+                       const worker = staff.find(s => s.id === task.assignedTo);
+                       const duration = task.completedAt && task.startedAt ? new Date(task.completedAt).getTime() - new Date(task.startedAt).getTime() : 0;
+                       return (
+                          <tr key={task.id} className="hover:bg-slate-50/50 transition-colors">
+                             <td className="px-8 py-4">
+                                <div className="flex items-center gap-3">
+                                   <div className="w-8 h-8 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center font-black text-xs">
+                                      {worker?.name.charAt(0)}
+                                   </div>
+                                   <div className="font-bold text-slate-800">{worker?.name || '—'}</div>
+                                </div>
+                             </td>
+                             <td className="px-8 py-4">
+                                <div className="flex flex-col">
+                                   <span className="text-sm font-bold text-slate-800">#{task.order.orderNumber}</span>
+                                   <span className="text-[10px] text-slate-400 font-bold uppercase truncate max-w-[200px]">{task.order.clientName}</span>
+                                </div>
+                             </td>
+                             <td className="px-8 py-4">
+                                <div className={`inline-flex px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider ${STAGE_CONFIG[task.stage].color} text-white`}>
+                                   {STAGE_CONFIG[task.stage].label}
+                                </div>
+                             </td>
+                             <td className="px-8 py-4">
+                                <div className="flex flex-col">
+                                   <span className="text-sm font-bold text-slate-800">{new Date(task.completedAt!).toLocaleDateString('ru-RU')}</span>
+                                   <span className="text-[10px] text-slate-400 font-bold uppercase">{new Date(task.completedAt!).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</span>
+                                </div>
+                             </td>
+                             <td className="px-8 py-4 text-right font-mono font-bold text-slate-700">
+                                {formatDuration(duration)}
+                             </td>
+                          </tr>
+                       );
+                    })}
+                    {filteredTasks.length === 0 && (
+                       <tr><td colSpan={5} className="px-8 py-20 text-center text-slate-400 font-bold uppercase text-[10px] tracking-widest italic opacity-50">Нет выполненных задач</td></tr>
+                    )}
+                 </tbody>
+              </table>
+           </div>
+        </div>
+      )}
+
+      {activeTab === 'time' && (
         <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden animate-in fade-in">
            <div className="p-8 border-b border-slate-100 bg-slate-50/30">
               <h3 className="text-sm font-black text-slate-700 uppercase tracking-widest flex items-center gap-2"><History size={16} className="text-blue-500" /> Журнал рабочих смен</h3>

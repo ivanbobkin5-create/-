@@ -16,6 +16,7 @@ interface ScheduleProps {
 
 const Schedule: React.FC<ScheduleProps> = ({ staff, currentUser, shifts, onToggleShift }) => {
   const [currentDate, setCurrentDate] = useState(new Date());
+  const [viewMode, setViewMode] = useState<'week' | 'month'>('week');
 
   const weekDays = useMemo(() => {
     const start = new Date(currentDate);
@@ -27,6 +28,15 @@ const Schedule: React.FC<ScheduleProps> = ({ staff, currentUser, shifts, onToggl
     });
   }, [currentDate]);
 
+  const monthDays = useMemo(() => {
+    const year = currentDate.getFullYear();
+    const month = currentDate.getMonth();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    return Array.from({ length: daysInMonth }, (_, i) => new Date(year, month, i + 1));
+  }, [currentDate]);
+
+  const days = viewMode === 'week' ? weekDays : monthDays;
+
   const formatDateKey = (date: Date) => date.toISOString().split('T')[0];
   
   // В графике отображаем ТОЛЬКО тех, кто отмечен "В цеху" в разделе Сотрудники
@@ -36,10 +46,16 @@ const Schedule: React.FC<ScheduleProps> = ({ staff, currentUser, shifts, onToggl
     <div className="space-y-6">
       <div className="flex items-center justify-between bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
         <div><h2 className="text-xl font-black text-slate-800 uppercase tracking-tight">График работы</h2><p className="text-sm text-slate-500">Только сотрудники со статусом «В цеху»</p></div>
-        <div className="flex bg-slate-50 rounded-xl border border-slate-200 p-1">
-          <button onClick={() => { const d = new Date(currentDate); d.setDate(d.getDate() - 7); setCurrentDate(d); }} className="p-2 hover:bg-white rounded-lg transition-all"><ChevronLeft size={20} /></button>
-          <div className="px-6 py-2 text-sm font-bold flex items-center gap-2"><CalendarDays size={16} className="text-blue-500" />{weekDays[0].toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })} — {weekDays[6].toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}</div>
-          <button onClick={() => { const d = new Date(currentDate); d.setDate(d.getDate() + 7); setCurrentDate(d); }} className="p-2 hover:bg-white rounded-lg transition-all"><ChevronRight size={20} /></button>
+        <div className="flex items-center gap-4">
+          <div className="flex bg-slate-50 rounded-xl border border-slate-200 p-1">
+            <button onClick={() => setViewMode('week')} className={`px-4 py-2 text-sm font-bold rounded-lg transition-all ${viewMode === 'week' ? 'bg-white shadow-sm' : ''}`}>Неделя</button>
+            <button onClick={() => setViewMode('month')} className={`px-4 py-2 text-sm font-bold rounded-lg transition-all ${viewMode === 'month' ? 'bg-white shadow-sm' : ''}`}>Месяц</button>
+          </div>
+          <div className="flex bg-slate-50 rounded-xl border border-slate-200 p-1">
+            <button onClick={() => { const d = new Date(currentDate); d.setDate(d.getDate() - (viewMode === 'week' ? 7 : 30)); setCurrentDate(d); }} className="p-2 hover:bg-white rounded-lg transition-all"><ChevronLeft size={20} /></button>
+            <div className="px-6 py-2 text-sm font-bold flex items-center gap-2"><CalendarDays size={16} className="text-blue-500" />{days[0].toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })} — {days[days.length - 1].toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}</div>
+            <button onClick={() => { const d = new Date(currentDate); d.setDate(d.getDate() + (viewMode === 'week' ? 7 : 30)); setCurrentDate(d); }} className="p-2 hover:bg-white rounded-lg transition-all"><ChevronRight size={20} /></button>
+          </div>
         </div>
       </div>
       <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
@@ -47,7 +63,7 @@ const Schedule: React.FC<ScheduleProps> = ({ staff, currentUser, shifts, onToggl
           <thead>
             <tr className="bg-slate-50/50">
               <th className="p-6 border-b border-r border-slate-100 w-64 text-[10px] font-black text-slate-400 uppercase tracking-widest">Сотрудник</th>
-              {weekDays.map(day => (<th key={day.toString()} className="p-4 border-b border-slate-100 text-center"><div className="text-[10px] font-black uppercase text-slate-400 mb-1">{day.toLocaleDateString('ru-RU', { weekday: 'short' })}</div><div className={`text-sm font-black ${formatDateKey(day) === formatDateKey(new Date()) ? 'text-blue-600' : ''}`}>{day.getDate()}</div></th>))}
+              {days.map(day => (<th key={day.toString()} className={`p-2 border-b border-slate-100 text-center ${viewMode === 'month' ? 'p-1' : ''}`}><div className="text-[10px] font-black uppercase text-slate-400 mb-1">{day.toLocaleDateString('ru-RU', { weekday: 'short' })}</div><div className={`text-sm font-black ${formatDateKey(day) === formatDateKey(new Date()) ? 'text-blue-600' : ''}`}>{day.getDate()}</div></th>))}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -59,7 +75,7 @@ const Schedule: React.FC<ScheduleProps> = ({ staff, currentUser, shifts, onToggl
                     <div><div className="text-sm font-bold">{member.name}</div><div className="text-[9px] text-slate-400 font-bold uppercase">{member.isProductionHead ? 'Нач. цеха' : 'Мастер'}</div></div>
                   </div>
                 </td>
-                {weekDays.map(day => {
+                {days.map(day => {
                   const dateKey = formatDateKey(day);
                   const isWorking = shifts[member.id]?.[dateKey];
                   const canEdit = currentUser.role === UserRole.COMPANY_ADMIN || 
@@ -67,18 +83,18 @@ const Schedule: React.FC<ScheduleProps> = ({ staff, currentUser, shifts, onToggl
                                   currentUser.id === member.id;
 
                   return (
-                    <td key={dateKey} className="p-2 text-center">
+                    <td key={dateKey} className="p-1 text-center">
                       <button 
                         onClick={() => onToggleShift(member.id, dateKey)} 
                         disabled={!canEdit}
-                        className={`w-full h-12 rounded-2xl flex items-center justify-center border-2 transition-all ${
+                        className={`w-full h-10 rounded-xl flex items-center justify-center border-2 transition-all ${
                           isWorking 
                             ? 'bg-emerald-50 border-emerald-500 text-emerald-600' 
                             : 'bg-slate-50 border-transparent text-slate-300 hover:border-slate-200'
                         } ${!canEdit ? 'opacity-40 cursor-not-allowed grayscale' : ''}`}
                         title={!canEdit ? "Нет прав для редактирования" : ""}
                       >
-                        {isWorking ? <Check size={20} /> : <X size={16} />}
+                        {isWorking ? <Check size={16} /> : <X size={12} />}
                       </button>
                     </td>
                   );

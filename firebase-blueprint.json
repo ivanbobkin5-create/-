@@ -1,0 +1,125 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "System user",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "email": { "type": "string" },
+        "name": { "type": "string" },
+        "role": { "enum": ["SITE_ADMIN", "COMPANY_ADMIN", "EMPLOYEE"] },
+        "companyId": { "type": "string" },
+        "companyName": { "type": "string" },
+        "avatar": { "type": "string" },
+        "source": { "enum": ["MANUAL", "BITRIX24"] },
+        "position": { "type": "string" },
+        "isProduction": { "type": "boolean" },
+        "isProductionHead": { "type": "boolean" },
+        "b24Id": { "type": "string" },
+        "shiftSalary": { "type": "number" }
+      },
+      "required": ["id", "email", "name", "role", "companyId"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Production order",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "companyId": { "type": "string" },
+        "clientName": { "type": "string" },
+        "orderNumber": { "type": "string" },
+        "deadline": { "type": "string", "format": "date-time" },
+        "description": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "priority": { "enum": ["LOW", "MEDIUM", "HIGH"] },
+        "externalId": { "type": "string" },
+        "externalStageId": { "type": "string" },
+        "externalCategoryId": { "type": "string" },
+        "source": { "enum": ["MANUAL", "BITRIX24"] },
+        "budgets": {
+          "type": "object",
+          "properties": {
+            "chipboard": { "type": "number" },
+            "chipboardReserve": { "type": "number" },
+            "mdf": { "type": "number" },
+            "mdfReserve": { "type": "number" },
+            "facades": { "type": "number" },
+            "fittings": { "type": "number" },
+            "countertops": { "type": "number" },
+            "stone": { "type": "number" },
+            "glassMetal": { "type": "number" }
+          }
+        },
+        "tasks": {
+            "type": "array",
+            "items": { "$ref": "#/entities/Task" }
+        }
+      },
+      "required": ["id", "companyId", "orderNumber", "createdAt"]
+    },
+    "Task": {
+      "title": "Task",
+      "description": "Production task",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "orderId": { "type": "string" },
+        "stage": { "type": "string" },
+        "status": { "enum": ["PENDING", "IN_PROGRESS", "PAUSED", "COMPLETED"] },
+        "assignedTo": { "type": "string" },
+        "accompliceIds": { "type": "array", "items": { "type": "string" } },
+        "plannedDate": { "type": "string" },
+        "startedAt": { "type": "string" },
+        "completedAt": { "type": "string" },
+        "notes": { "type": "string" },
+        "externalTaskId": { "type": "string" },
+        "title": { "type": "string" },
+        "rate": { "type": "number" }
+      }
+    },
+    "WorkSession": {
+      "title": "Work Session",
+      "description": "User work session",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "startTime": { "type": "string", "format": "date-time" },
+        "endTime": { "type": "string", "format": "date-time" },
+        "companyId": { "type": "string" }
+      },
+      "required": ["id", "userId", "startTime", "companyId"]
+    },
+    "Company": {
+        "title": "Company",
+        "description": "Company registration and config",
+        "type": "object",
+        "properties": {
+            "id": { "type": "string" },
+            "name": { "type": "string" },
+            "bitrixConfig": { "type": "object" },
+            "shifts": { "type": "object" }
+        }
+    }
+  },
+  "firestore": {
+    "companies/{companyId}": {
+      "schema": "Company",
+      "description": "Company document"
+    },
+    "users/{userId}": {
+      "schema": "User",
+      "description": "User profiles"
+    },
+    "orders/{orderId}": {
+      "schema": "Order",
+      "description": "Order documents"
+    },
+    "sessions/{sessionId}": {
+      "schema": "WorkSession",
+      "description": "Work sessions"
+    }
+  }
+}
